@@ -22,6 +22,8 @@ TruthLens points a human at places worth checking. It does not decide whether me
 On our own untouched phone and WhatsApp recordings, the first trained detectors flagged 2 of 3 as AI. They were trained
 on studio speech and stock footage. They don't count toward the label until calibrated on our own media.
 
+Detectors v2 sharply lowered false alarms on our phone media (held-out: image 1/29, video 0/22, audio 10/114 windows; wide intervals). v2 catches fewer AI videos than v1 (89% vs 98% on the test set), Sora detection fell to 12% on a small sample, and audio false alarms on public untouched test files are 9.3%.
+
 They are also weak on generators not in training (e.g. Sora, Kling, Pika, Midjourney), and there is no face-swap
 training data. Each finding shows its model version, score and threshold. Its weight stays 0 ("uncalibrated (not
 counted in label)") until a media type has at least 10 untouched and 10 AI files of our own (our test set plus the

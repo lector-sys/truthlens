@@ -2,7 +2,7 @@
 One flow: Upload -> Analyzing -> Results (overview, then Evidence / Cross-media / All findings / Custody / Calibration).
 Theme "Evidence Light Table": ui/theme.css + .streamlit/config.toml, fonts bundled in static/fonts. Display only:
 nothing here changes an analysis result, weight or label."""
-import base64, hashlib, html, io, json, logging, threading, time, traceback
+import base64, hashlib, html, io, json, logging, re, threading, time, traceback
 from pathlib import Path
 import numpy as np
 import streamlit as st
@@ -974,7 +974,7 @@ def calibration_tab():
 <li>The test set is small and team-made, so every rate has a wide interval: read the bars, not the dots.</li>
 <li>Platform recompression and resizing can both create and erase these indicators.</li>
 <li>{e(fusion.ALIGN_RULE)}</li>
-<li>Trained detectors: {e(learned.WEAK)} {e(learned.FIRST_RESULT)}</li>
+<li>Trained detectors: {e(learned.WEAK)} {e(learned.FIRST_RESULT)} {e(learned.V2)}</li>
 <li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
 <li>No indicators does not mean unaltered. The language model reads text, compares captions with pictures and lists visible
 artifacts with their location; it is never asked whether media is synthetic.</li></ul></div>''')
@@ -991,7 +991,8 @@ artifacts with their location; it is never asked whether media is synthetic.</li
                      f'<td {td}>{v["need"]["untouched"]} untouched, {v["need"]["ai"]} AI</td></tr>' for t, v in lw.items())
            + "</table></div>")
     card = server_model_card()
-    with st.expander("Model card: trained detectors (from the detector server)"):
+    ver = re.search(r"\((v\d+)[,)]", card.splitlines()[0]) if card else None
+    with st.expander("Model card: trained detectors (from the detector server)" + (f" · {ver[1]}" if ver else "")):
         if card:
             st.markdown(card)
         else:

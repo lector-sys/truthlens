@@ -13,6 +13,9 @@ WEAK = ("Weak on generators not in training (e.g. Sora, Kling, Pika, Midjourney)
 FIRST_RESULT = ("On our own untouched phone and WhatsApp recordings, the first trained detectors flagged 2 of 3 as AI. They "
                 "were trained on studio speech and stock footage. They don't count toward the label until calibrated on our "
                 "own media.")
+# "untouched test files", not the brief's "real": same wording rule
+V2 = ("Detectors v2 sharply lowered false alarms on our phone media (held-out: image 1/29, video 0/22, audio 10/114 windows; "
+      "wide intervals). v2 catches fewer AI videos than v1 (89% vs 98% on the test set), Sora detection fell to 12% on a small sample, and audio false alarms on public untouched test files are 9.3%.")
 ALT = {
     "image": ["phone processing (HDR, night mode, beauty filters, upscaling) the training photos did not have",
               "heavy recompression or resizing by a messenger or social site",
@@ -34,7 +37,7 @@ def analyze(path, case, modality, seconds=0.0):
     s, thr, ver, loc = r["score"], r["threshold"], r.get("model_version", "?"), r.get("location", {})
     head = (f"A trained AI-generation detector ({ver}) scores this {modality} {s:.2f}, at or above its threshold of {thr:.2f}")
     trained = r.get("trained_on") or "not reported by the detector server (see the model card on the Calibration page)"
-    tail = f" Trained on: {trained if isinstance(trained, str) else ', '.join(trained)}. {WEAK} {FIRST_RESULT}"
+    tail = f" Trained on: {trained if isinstance(trained, str) else ', '.join(trained)}. {WEAK} {FIRST_RESULT} {V2}"
     location, artifact, where = {"model_version": ver, "threshold": thr}, None, ""
     if modality == "image":
         try:

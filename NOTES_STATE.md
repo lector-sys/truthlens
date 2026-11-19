@@ -287,3 +287,10 @@ B and C must `git pull origin main` before more work. No force-pushes.
 | `scene_cuts(path)` | TASKS A6 signature | `scene_cuts(path, case)`, so a scenedetect failure is logged instead of crashing the video analyzer |
 | Playwright screenshots | §4.3 | Headless Edge via DevTools protocol (scratch script, not in repo); 12 PNGs in `docs/screenshots/` reviewed and fixed |
 | Dashboard v2 brief: bundled Inter / Space Grotesk / JetBrains Mono, `ui/theme.css` | §4.3 (earlier read as ruling out bundled fonts), §4.2 new files | Built as asked by the lead: fonts are static OFL assets, not Python dependencies (§4.3 lists packages and HTTP APIs); new files `ui/theme.css`, `static/fonts/*` |
+
+## Detectors v2 + phone hold-out calibration (2026-11-20)
+- Server now serves v2 (image-clipL14-20261120-v2 thr 0.6579, video-clipL14-20261120-v2 thr 0.6614, audio-wavlmB+-20261120-v2 thr 0.7084), `/model_card` (v2), `/exports/training_hashes`, `/exports/phone_holdout/{image,video,audio}`.
+- Calibration adds the phone hold-out as our own untouched rows (source=phone_holdout): image 29 rows (1 false alarm), video 22 (0), audio 114 windows (10). Training hashes: none of our test files are on the list (0 excluded). No phone hold-out file is one of our test files.
+- Own untouched rows incl. hold-out: image 29, video 23, audio 116; own AI rows: 0 for every media, so all three stay uncalibrated (weight 0). Still needed: 10 AI files per media type.
+- v1 detector replies were moved out of cache/ (the cache key is file bytes + modality, not model version), so every score now is v2.
+- Analyze fresh (v2): demo1 Moderate 0.72 (image 0.56 < 0.66), demo2 Moderate 0.67 (video 0.05 < 0.66), demo3 Weak 0.35 (image 0.53 < 0.66); 1.m4a no significant 0.00 (audio 0.02 < 0.71; v1 0.90 fired); 5.m4a no significant 0.00 (0.02); WhatsApp Weak 0.15 (video 0.34 < 0.66; v1 0.69 fired).
