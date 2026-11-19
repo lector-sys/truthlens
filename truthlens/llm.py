@@ -121,36 +121,49 @@ def _format_rules(schema):
             "no other keys): " + json.dumps(schema, separators=(",", ":")))
 
 
-CONNECT_S, TTFB_S, READ_S = 3, 20, 60  # connect; first byte of a short model call; any later read
+# Seconds: connect; first byte (streamed Ollama: first chunk = queue + load + prefill done; whisper: 30 s + audio length);
+# idle gap between streamed chunks (no cap on the total, so long healthy generations never trip it); read of a
+# non-streamed body; the /api/ps probe after a timeout.
+CONNECT_S, TTFB_S, IDLE_S, READ_S, PROBE_S = 3, 20, 10, 60, 3
 
 
 class NetworkError(Exception):
-    """The GPU server didn't answer: connect failed or stalled, no first byte in time, or the read stalled.
-    `.stage` is "connect" | "first byte" | "read"; `.timing` has the client-side seconds measured so far."""
+    """The GPU server didn't answer in time or the connection failed. `.stage`: "connect" | "first byte" | "idle"
+    (stream stalled between chunks) | "read"; `.timeout`: it was a timeout (not refused / reset); `.timing`: client
+    seconds measured so far."""
 
     def __init__(self, stage, err, timing):
         super().__init__(f"{stage}: {err!r}")
-        self.stage, self.timing = stage, timing
+        self.stage, self.timing, self.timeout = stage, timing, isinstance(err, TimeoutError)
 
 
-def _post(url, body, headers, ttfb=None):
+def _post(url, body, headers, ttfb=None, stream=False):
     """POST on a fresh connection (never a pooled one, so a retry can't land on a dead socket).
+    stream=True reads NDJSON lines: first byte = first line, then at most IDLE_S between lines, no total cap.
     -> (status, bytes, {"connect_s", "ttfb_s", "total_s"}); NetworkError on any socket-level failure."""
     u = urlparse(url)
     t0, timing, stage = time.time(), {}, "connect"
     conn = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.hostname, u.port, timeout=CONNECT_S)
     try:
         conn.connect()
+        sock = conn.sock  # kept: the response reads through it even if http.client drops conn.sock
         timing["connect_s"] = round(time.time() - t0, 3)
         stage = "first byte"
-        conn.sock.settimeout(TTFB_S if ttfb is None else ttfb)
+        sock.settimeout(TTFB_S if ttfb is None else ttfb)
         conn.request("POST", u.path or "/", body, headers)
         r = conn.getresponse()
-        timing["ttfb_s"] = round(time.time() - t0, 3)
-        stage = "read"
-        if conn.sock:
-            conn.sock.settimeout(READ_S)
-        data = r.read()
+        if stream and r.status == 200:
+            lines = [r.readline()]
+            timing["ttfb_s"] = round(time.time() - t0, 3)
+            stage = "idle"
+            sock.settimeout(IDLE_S)
+            lines += list(iter(r.readline, b""))
+            data = b"".join(lines)
+        else:
+            timing["ttfb_s"] = round(time.time() - t0, 3)
+            stage = "read"
+            sock.settimeout(READ_S)
+            data = r.read()
     except (OSError, http.client.HTTPException) as e:  # timeout, refused, reset, DNS, truncated response
         timing["total_s"] = round(time.time() - t0, 3)
         raise NetworkError(stage, e, timing) from e
@@ -160,19 +173,44 @@ def _post(url, body, headers, ttfb=None):
     return r.status, data, timing
 
 
-def _ollama(model, system, user, jpegs, schema):
-    """Ollama's native /api/chat (its OpenAI-compatible endpoint reports no timings) via _post. -> (parsed reply, stats):
-    client-side connect_s / ttfb_s / total_s, and server-side queue_s = server time not spent loading, reading or
-    generating, i.e. waiting behind other requests (this server runs one request at a time)."""
+def probe():
+    """After a timeout, before the retry: GET /api/ps on the GPU server (PROBE_S, fresh connection).
+    -> ("busy", "running <models>") if it answers with a loaded model, else ("network", why). Note /api/ps lists
+    *loaded* models; this server keeps truthlens-vl loaded, so an answer mostly means "reachable, model up"."""
+    if not OLLAMA_URL:
+        return "network", "no OLLAMA_URL to probe"
     u = urlparse(OLLAMA_URL)
-    body = {"model": model, "stream": False, "format": schema,
+    try:
+        with urllib.request.urlopen(f"{u.scheme}://{u.netloc}/api/ps", timeout=PROBE_S) as r:
+            models = [m.get("name", "?") for m in json.load(r).get("models", [])]
+    except (OSError, ValueError) as e:
+        return "network", f"/api/ps: {e!r}"[:120]
+    return ("busy", "running " + ", ".join(models)) if models else ("network", "/api/ps answered but no model is loaded")
+
+
+def _failure(e):
+    """Log fields for a failed GPU-server attempt: timeouts are classified by probe(); refused / reset is network."""
+    verdict, note = probe() if e.timeout else ("network", "connection failed, not a timeout")
+    return {"network": verdict == "network", "verdict": verdict, "probe": note, "stage": e.stage, **e.timing}
+
+
+def _ollama(model, system, user, jpegs, schema):
+    """Ollama's native /api/chat, streamed (its OpenAI-compatible endpoint reports no timings) via _post. -> (parsed
+    reply, stats): client-side connect_s / ttfb_s (first chunk = prefill done) / total_s, and server-side queue_s =
+    server time not spent loading, reading or generating, i.e. waiting behind other requests."""
+    u = urlparse(OLLAMA_URL)
+    body = {"model": model, "stream": True, "format": schema,
             "options": {"temperature": 0, "seed": SEED, "num_predict": MAX_TOKENS},
             "messages": [{"role": "system", "content": f"{system}\n\n{_format_rules(schema)}\n\n{GUARD}"},
                          {"role": "user", "content": user, "images": [base64.b64encode(j).decode() for j in jpegs]}]}
-    status, data, timing = _post(f"{u.scheme}://{u.netloc}/api/chat", json.dumps(body), {"Content-Type": "application/json"})
+    status, data, timing = _post(f"{u.scheme}://{u.netloc}/api/chat", json.dumps(body), {"Content-Type": "application/json"},
+                                 stream=True)
     if status != 200:
         raise RuntimeError(f"ollama HTTP {status}: {data[:200]!r}")
-    d = json.loads(data)
+    chunks = [json.loads(line) for line in data.splitlines() if line.strip()]
+    if not chunks or "error" in chunks[-1] or not chunks[-1].get("done"):
+        raise RuntimeError(f"ollama stream ended without done: {(chunks or [{}])[-1]!r}"[:200])
+    d = {**chunks[-1], "message": {"content": "".join(c.get("message", {}).get("content", "") for c in chunks)}}
     sec = {k: d.get(f"{k}_duration", 0) / 1e9 for k in ("total", "load", "prompt_eval", "eval")}
     stats = {"input_tokens": d.get("prompt_eval_count"), "output_tokens": d.get("eval_count"), "done_reason": d.get("done_reason"),
              "load_s": round(sec["load"], 2), "prefill_s": round(sec["prompt_eval"], 2), "gen_s": round(sec["eval"], 2),
@@ -246,8 +284,8 @@ def ask_json(system, user, images=(), *, schema, name, version, effort="low", ca
             try:
                 out, stats = _call(p, c, model, system, user, images, schema, name, effort)
                 err = invalid(out, schema)
-            except NetworkError as e:  # GPU server: stalled / refused / no answer; the retry opens a fresh connection
-                err, stats = str(e)[:200], {"network": True, "stage": e.stage, **e.timing}
+            except NetworkError as e:  # GPU server: probe classifies busy vs network, then retry on a fresh connection
+                err, stats = str(e)[:200], _failure(e)
             except APIConnectionError as e:  # cloud SDK providers
                 if not isinstance(e, APITimeoutError):  # unreachable: a retry won't help, go to the next provider
                     why.append(f"{p}: {e!r}"[:200])
@@ -305,7 +343,7 @@ def transcribe(path, case=None):
                     break
                 except NetworkError as e:
                     _log(case, "llm_attempt_failed", check="transcribe", provider="whisper", attempt=attempt, error=str(e)[:200],
-                         network=True, stage=e.stage, **e.timing)
+                         **_failure(e))
                     if attempt == 2:
                         raise
             segs = [{"start": s["start"], "end": s["end"], "text": s["text"],
@@ -374,11 +412,17 @@ BUSY_S = 5.0
 
 
 def server_warnings(log):
-    """Dashboard warnings for this case's GPU-server calls. "busy" only when the server itself reports > BUSY_S queued
-    (queue_s); "network" when the client gave up: connect failed or stalled, no first byte in time, or the read stalled."""
+    """Dashboard warnings for this case's GPU-server calls. "busy": the server reported > BUSY_S queued (queue_s), or a
+    call timed out and the /api/ps probe answered with a running model. "network": the probe got no answer too, or the
+    connection was refused / reset."""
     out = [f"GPU server busy, waited {e['queue_s']:.0f} s · {e['check']}" for e in log
            if e["action"] == "llm_call" and (e.get("queue_s") or 0) > BUSY_S]
-    out += [f"GPU server didn't respond (network), {'retried' if e.get('attempt', 1) == 1 else 'retry failed too'} · "
-            f"{e['check']} (no answer at {e.get('stage', '?')} after {e.get('total_s', 0):.0f} s)" for e in log
-            if e["action"] == "llm_attempt_failed" and e.get("network")]
+    for e in log:
+        if e["action"] != "llm_attempt_failed" or not ("verdict" in e or e.get("network")):
+            continue
+        then = "retried" if e.get("attempt", 1) == 1 else "retry failed too"
+        where = f"{e.get('stage', '?')} after {e.get('total_s', 0):.0f} s"
+        out.append(f"GPU server busy ({e.get('probe', '')}), timed out at {where}, {then} · {e['check']}"
+                   if e.get("verdict") == "busy" else
+                   f"GPU server didn't respond (network), {then} · {e['check']} (no answer at {where})")
     return out

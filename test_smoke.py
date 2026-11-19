@@ -1,5 +1,5 @@
 """python test_smoke.py: end-to-end check of vault, image analyzer, fusion, cross-modal, report."""
-import io, json, os, re, shutil, socket, subprocess, threading, wave
+import http.server, io, json, os, re, shutil, socket, subprocess, threading, time, wave
 from types import SimpleNamespace as NS
 import numpy as np
 from PIL import Image
@@ -189,28 +189,81 @@ try:
         signed.write_bytes(bytes(d))
         bad = image.synthetic_provenance(signed, case)[0].explanation
         assert "failed verification" in bad and "dataHash.mismatch" in bad, bad
-    # GPU server: a connection that accepts but never answers -> given up at "first byte", retried on a NEW connection,
-    # shown as a network warning (not "busy"); a server-reported queue > 5 s -> "busy"
+    # GPU server, streamed Ollama + /api/ps probe, against a fake server. The user text picks the behaviour:
+    #   healthy: chunks every 0.2 s for 1.6 s with a 0.5 s idle limit -> succeeds (no cap on the total)
+    #   hang: /api/chat never answers but /api/ps does -> timed out at first byte, probe -> "busy", retried
+    #   stall: first chunk, then silence -> timed out at "idle"
+    # and a socket that accepts but never answers anything -> probe gets nothing too -> "network", retried on a new conn
+    class Fake(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self._reply(b'{"models": [{"name": "truthlens-vl:latest"}]}')
+
+        def do_POST(self):
+            text = self.rfile.read(int(self.headers["Content-Length"])).decode()
+            try:
+                if "hang" in text:
+                    time.sleep(1.5)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                done = '{"done": true, "total_duration": 2e8, "load_duration": 0, "prompt_eval_duration": 1e8, "eval_duration": 1e8}\n'
+                parts = ['{"message": {"content": "{\\"consistent\\": true, "}, "done": false}\n',
+                         '{"message": {"content": "\\"mismatches\\": [], \\"confidence\\": 0.9}"}, "done": false}\n'] + [
+                         '{"message": {"content": ""}, "done": false}\n'] * 6 + [done]
+                for n, line in enumerate(parts):
+                    self.wfile.write(line.encode())
+                    self.wfile.flush()
+                    time.sleep(1.5 if "stall" in text and n == 0 else 0.2)
+            except OSError:  # the client gave up first, as intended
+                pass
+
+        def _reply(self, body):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+    fake.daemon_threads = True
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
     stall = socket.socket()
     stall.bind(("127.0.0.1", 0))
-    stall.listen(4)
+    stall.listen(8)
     conns = []
-    threading.Thread(target=lambda: [conns.append(stall.accept()[0]) for _ in range(2)], daemon=True).start()
-    saved = (llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.FRESH)
-    llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.FRESH = (
-        ["ollama"], {"ollama": object()}, f"http://127.0.0.1:{stall.getsockname()[1]}/v1", 0.5, True)
+    threading.Thread(target=lambda: [conns.append(stall.accept()[0]) for _ in range(4)], daemon=True).start()
+    saved = (llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.IDLE_S, llm.PROBE_S, llm.FRESH)
+    llm.PROVIDERS, llm._clients, llm.TTFB_S, llm.IDLE_S, llm.PROBE_S, llm.FRESH = (
+        ["ollama"], {"ollama": object()}, 0.5, 0.5, 0.3, True)
+
+    def failed():
+        return [e for e in case.entries() if e["action"] == "llm_attempt_failed"][-2:]
     try:
-        assert crossmodal._ask_caption("stalled server", [], case) is None
+        llm.OLLAMA_URL = f"http://127.0.0.1:{fake.server_address[1]}/v1"
+        assert crossmodal._ask_caption("healthy", [], case)["confidence"] == 0.9
+        ok = case.entries()[-1]
+        assert ok["action"] == "llm_call" and ok["total_s"] > 3 * llm.IDLE_S and ok["ttfb_s"] < llm.TTFB_S, ok
+        assert crossmodal._ask_caption("hang", [], case) is None
+        busy = failed()
+        assert [(f["verdict"], f["stage"]) for f in busy] == [("busy", "first byte")] * 2, busy
+        assert crossmodal._ask_caption("stall", [], case) is None
+        assert [f["stage"] for f in failed()] == ["idle"] * 2, failed()
+        llm.OLLAMA_URL = f"http://127.0.0.1:{stall.getsockname()[1]}/v1"
+        assert crossmodal._ask_caption("dead server", [], case) is None
+        net = failed()
+        assert [(f["verdict"], f["stage"]) for f in net] == [("network", "first byte")] * 2 and len(conns) == 4, (net, len(conns))
     finally:
-        llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.FRESH = saved
+        llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.IDLE_S, llm.PROBE_S, llm.FRESH = saved
+        fake.shutdown()
         stall.close()
-    fails = [e for e in case.entries() if e["action"] == "llm_attempt_failed"][-2:]
-    assert len(conns) == 2 and [f["stage"] for f in fails] == ["first byte"] * 2 and fails[0]["connect_s"] < 1, fails
     log = [{"action": "llm_call", "check": "summary", "queue_s": 26.6}, {"action": "llm_call", "check": "claims", "queue_s": 0.3}]
-    warn = llm.server_warnings(log + fails)
-    assert warn[0] == "GPU server busy, waited 27 s · summary" and len(warn) == 3, warn
-    assert warn[1].startswith("GPU server didn't respond (network), retried · caption_consistency (no answer at first byte"), warn
-    assert "retry failed too" in warn[2], warn
+    warn = llm.server_warnings(log + busy[:1] + net)
+    assert warn[0] == "GPU server busy, waited 27 s · summary" and len(warn) == 4, warn
+    assert warn[1].startswith("GPU server busy (running truthlens-vl:latest), timed out at first byte"), warn
+    assert warn[2].startswith("GPU server didn't respond (network), retried · caption_consistency"), warn
+    assert "retry failed too" in warn[3], warn
     up = Image.fromarray(ph.scene(w=320, h=240)).resize((640, 480), Image.BICUBIC)
     sp = image.spectral_upsampling(Path("up.png"), up, case)
     assert [i.type for i in sp] == ["spectral_upsampling"] and sp[0].score > 0.5 and Path(sp[0].artifact).exists(), sp
