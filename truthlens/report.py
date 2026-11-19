@@ -15,8 +15,19 @@ SUMMARY_SCHEMA = {"type": "object", "additionalProperties": False, "required": [
                   "properties": {"summary": {"type": "string"}}}
 
 TEMPLATE = Template("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>TruthLens report {{ case.id }}</title>
-<style>body{font-family:sans-serif;max-width:1000px;margin:auto;padding:0 12px}td,th{border:1px solid #ccc;padding:4px;vertical-align:top}
-table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}</style>
+<style>{{ fonts }}
+/* print-friendly light version of the dashboard's "Evidence Light Table" theme: white page, same fonts and tags */
+body{font:15px/1.5 Inter,"Segoe UI",system-ui,sans-serif;color:#1A202C;background:#fff;max-width:1040px;margin:auto;padding:0 16px 40px}
+h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.01em;color:#0D1117}h1{font-size:1.7rem}
+h2{border-bottom:2px solid #0D1117;padding-bottom:4px;margin-top:2em}
+code,pre,.tag{font-family:"JetBrains Mono",Consolas,monospace;font-variant-numeric:tabular-nums}pre{font-size:11px;white-space:pre-wrap}
+td,th{border:1px solid #CBD2DA;padding:5px 6px;vertical-align:top;font-size:13px}th{background:#F1F4F7;text-align:left}
+table{border-collapse:collapse;width:100%;table-layout:fixed}td img{width:100%;max-width:150px}td{overflow-wrap:anywhere}.note{color:#4A5563}
+.tag{display:inline-block;position:relative;padding:2px 8px 2px 20px;border:1.5px solid #2C7A7B;border-radius:3px 8px 8px 3px;
+color:#1D5F60;font-weight:600;font-size:12px;white-space:nowrap}
+.tag:before{content:"";position:absolute;left:6px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;border:1.5px solid #2C7A7B}
+.uncal{border-style:dashed}
+@media print{h2{break-after:avoid}tr{break-inside:avoid}body{max-width:none}}</style>
 </head><body>
 <h1>TruthLens forensic report: {{ case.id }}</h1>
 {% if missing %}<p style="background:#F97352;color:#000;padding:8px;font-weight:bold">{{ missing }}</p>{% endif %}
@@ -38,11 +49,12 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 compression-based checks (ELA) see the conversion, not the original. The evidence hash is the original file's.</p>{% endfor %}
 <h2>Flagged evidence</h2>
 {% if not indicators %}<p>No indicators were raised.</p>{% endif %}
-{% for g, what in groups.items() %}{% set grp = rows|selectattr('0.type', 'in', group_types[g])|list %}{% if grp %}
+{% for g, what in groups.items() %}{% set grp = rows|selectattr('1.type', 'in', group_types[g])|list %}{% if grp %}
 <h3>{{ g }}: {{ what }}</h3>
-<table><tr><th>File</th><th>Indicator</th><th>Location</th><th>Score / reliability</th><th>Why</th><th>Could also be</th><th>Recommended check</th><th>Evidence</th></tr>
-{% for i, img in grp %}<tr><td>{{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %}</td><td>{{ i.modality }} · {{ i.type }}</td>
-<td>{{ i.location }}</td><td>{{ '%.2f' % i.score }} / {{ i.reliability }}{% if not calibrated(i) %}<br><i>{{ uncal }}</i>{% endif %}</td><td>{{ i.explanation }}</td>
+<table><colgroup><col style="width:72px"><col style="width:11%"><col style="width:12%"><col style="width:10%"><col style="width:8%"><col><col style="width:13%"><col style="width:16%"><col style="width:120px"></colgroup>
+<tr><th>Tag</th><th>File</th><th>Indicator</th><th>Location</th><th>Score / reliability</th><th>Why</th><th>Could also be</th><th>Recommended check</th><th>Evidence</th></tr>
+{% for t, i, img in grp %}<tr><td><span class="tag{{ '' if calibrated(i) else ' uncal' }}">{{ t }}</span></td><td>{{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %}</td><td>{{ i.modality }} · {{ i.type }}</td>
+<td>{{ where(i.location) }}</td><td>{{ '%.2f' % i.score }} / {{ i.reliability }}{% if not calibrated(i) %}<br><i>{{ uncal }}</i>{% endif %}</td><td>{{ i.explanation }}</td>
 <td>{{ i.alt_explanations|join('; ') }}</td><td>{{ recommended(i)|join('; ') }}</td><td>{% if img %}<img src="{{ img }}" alt="{{ i.type }} artifact">{% endif %}</td></tr>{% endfor %}</table>{% endif %}{% endfor %}
 <h2>All recommended human checks</h2><ol>{% for c in checks %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
 <h2>Limitations</h2><ul>
@@ -54,6 +66,39 @@ compression-based checks (ELA) see the conversion, not the original. The evidenc
 <li>Absence of indicators does not prove the media is unaltered.</li></ul>
 <h2>Analysis log</h2><pre>{% for e in log %}{{ e }}
 {% endfor %}</pre></body></html>""")
+
+
+FONTS = Path(__file__).resolve().parent.parent / "static" / "fonts"
+
+
+def font_faces():
+    """@font-face rules with the bundled fonts embedded, so the report stays one self-contained file."""
+    return "".join(f'@font-face{{font-family:"{fam}";src:url(data:font/woff2;base64,'
+                   f'{base64.b64encode((FONTS / f"{f}.woff2").read_bytes()).decode()}) format("woff2");font-weight:100 900}}'
+                   for fam, f in (("Inter", "inter"), ("Space Grotesk", "space-grotesk"), ("JetBrains Mono", "jetbrains-mono"))
+                   if (FONTS / f"{f}.woff2").exists())
+
+
+def where(loc):
+    """A finding's location in words: region, time, span, metadata tag."""
+    if "bbox" in loc:
+        x, y, w, h = loc["bbox"]
+        s = f"x{x} y{y} · {w}×{h}px" + (f" ↔ x{loc['bbox2'][0]} y{loc['bbox2'][1]}" if "bbox2" in loc else "")
+        return s + (f" @ {loc['t']:.1f}s" if "t" in loc else "")
+    if "t" in loc:
+        return f"{loc['t']:.2f}s" + (f" · frame {loc['frame']}" if "frame" in loc else "")
+    if "start" in loc:
+        return f"{loc['start']:.2f}–{loc['end']:.2f}s"
+    if "span" in loc:
+        return f"“{loc['span']}”"
+    return f"metadata: {loc['meta']}" if "meta" in loc else "whole file"
+
+
+def tagged(indicators):
+    """[(tag, finding)]: evidence-tag numbers E-01, E-02... in finding order (contribution to the label, then score),
+    the same in the dashboard and the report."""
+    order = sorted(indicators, key=lambda i: (-fusion.contribution(i), -i.score))
+    return [(f"E-{n:02d}", i) for n, i in enumerate(order, 1)]
 
 
 def data_uri(path):
@@ -134,6 +179,8 @@ def human_checks(indicators, limit=10):
 
 def summary(result, case=None):
     """LLM summary from indicators only; cached on the result so Streamlit reruns don't re-bill the API."""
+    if result.get("failed"):
+        return "The analysis did not complete, so there are no findings to summarise."
     if "summary" not in result:
         a, inds = result["assessment"], result["indicators"]
         top = sorted(inds, key=lambda i: -i.score * fusion.weight(i))[:20]  # the summary names the strongest 2-3 anyway
@@ -167,9 +214,9 @@ def render(case, result):
     groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
               "Context": "the caption or claims disagree with the media"}
     group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
-    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=result.get("headline") or fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, align_rule=fusion.ALIGN_RULE, coverage_line=pipeline.coverage_line(cov), groups=groups,
+    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, where=where, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=result.get("headline") or fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, align_rule=fusion.ALIGN_RULE, coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
-                           calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
+                           calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(t, i, data_uri(i.artifact)) for t, i in tagged(inds)], fonts=font_faces(),
                            integrity=result["integrity"], ingests=[e for e in log if e["action"] == "ingest"],
                            log=log, checks=checks, summary=summary(result, case))

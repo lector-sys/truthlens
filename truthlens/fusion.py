@@ -78,12 +78,18 @@ def weight(i, weights=None):
     return (TYPE_WEIGHT if weights is None else weights).get(key(i), 0.0)
 
 
+def contribution(i, weights=None):
+    """What one finding can add to the label: score*weight (an A/V alignment at most ALIGN_BONUS)."""
+    v = i.score * weight(i, weights)
+    return min(v, ALIGN_BONUS) if i.type == "av_aligned_flags" else v
+
+
 def contributions(indicators, weights=None):
-    """{(file, type): strongest score*weight}: what the noisy-OR actually combines (the "why this label" bars)."""
+    """{(file, type): strongest contribution}: what the noisy-OR actually combines (the "why this label" bars)."""
     best = {}
     for i in indicators:
-        k, v = (i.file, i.type), i.score * weight(i, weights)
-        best[k] = max(best.get(k, 0.0), min(v, ALIGN_BONUS) if i.type == "av_aligned_flags" else v)
+        k = (i.file, i.type)
+        best[k] = max(best.get(k, 0.0), contribution(i, weights))
     return best
 
 

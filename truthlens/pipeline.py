@@ -48,7 +48,8 @@ def mark_failed(case, why):
 
 def run(case, context_text="", progress=lambda step, state: None):
     """Analyze every evidence file, then context text, cross-modal checks and fusion. `progress(step, state)` is called
-    with state "running" / "done" / "error" for each step so a UI can show live status. Result saved to result.json.
+    with state "queued" (all steps, first), then "running" / "done" / "error" for each step so a UI can show live
+    status. Result saved to result.json.
     Anything that escapes leaves the case marked failed (never half-finished)."""
     try:
         return _run(case, context_text, progress)
@@ -59,8 +60,11 @@ def run(case, context_text="", progress=lambda step, state: None):
 
 def _run(case, context_text, progress):
     indicators = []
-    for path in case.evidence():
-        mods, dur = route(path, case)
+    plan = [(path, *route(path, case)) for path in case.evidence()]
+    for step in ([f"{m.__name__.rsplit('.', 1)[1]} · {p.name}" for p, mods, _ in plan for m in mods]
+                 + ["text · context"] * bool(context_text) + ["cross-media checks", "summary"]):
+        progress(step, "queued")  # the whole plan first, so a UI can list what is still to come
+    for path, mods, dur in plan:
         if not mods:
             case.log("skipped", file=path.name, reason="no audio or video stream" if dur else "unsupported type")
             continue
@@ -92,7 +96,9 @@ def _run(case, context_text, progress):
     result = {"indicators": indicators, "assessment": fusion.assess(indicators), "integrity": case.verify(),
               "context": context_text}
     case.log("assessed", **result["assessment"]["case"])
+    progress("summary", "running")
     report.summary(result, case)  # once per run, saved below: viewing the case must not call (or log) the model again
+    progress("summary", "done")
     result["source"] = llm.source(case.entries())  # "live" or "result from cache (date)"
     result["coverage"] = coverage(case, context_text)
     result["headline"] = fusion.headline(result["assessment"], result["coverage"])
