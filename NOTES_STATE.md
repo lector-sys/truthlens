@@ -143,6 +143,13 @@
   0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
 - Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
 
+## Ownership lifted (2026-11-19)
+- AGENTS.md §2: the team works on one laptop, so file ownership by member (A/B/C/D) no longer restricts edits; the
+  table now only names areas. §4.10 no longer says "commit only your own files". Every other rule is unchanged.
+- First cross-area edit: `image.synthetic_provenance` says "names an AI image / video / audio generator" by the
+  evidence's media (`fusion.media`). Audio files get the provenance check from `pipeline.py` (.wav/.mp3/.m4a/.flac,
+  what c2patool 0.27 signs); `synthetic_provenance/audio` has no weight, so it only shows (banner + finding).
+
 ## Module map
 | File | Role |
 |---|---|

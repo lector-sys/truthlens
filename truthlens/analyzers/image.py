@@ -6,7 +6,7 @@ from collections import Counter
 import cv2
 import numpy as np
 from PIL import Image, ImageChops, ExifTags, ImageFilter
-from .. import llm
+from .. import fusion, llm
 from ..indicator import Indicator
 from .media_meta import readable_image
 
@@ -227,7 +227,7 @@ def synthetic_provenance(path, case):
         found.append("metadata declares DigitalSourceType = trainedAlgorithmicMedia (made by a generative model)")
         score = 0.9
     if names:
-        found.append(f"metadata names an image generator: {', '.join(names)}")
+        found.append(f"metadata names an AI {fusion.media(path.name)} generator: {', '.join(names)}")
         score = max(score, 0.7)
     if c2pa:
         found.append(status + ("" if found else "; it declares no AI generation"))

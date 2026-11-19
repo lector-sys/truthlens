@@ -14,17 +14,17 @@ Pipeline (see `flowchart.html`):
 `upload (app.py) → evidence vault (vault.py) → pipeline.py routes by extension → analyzers/* each return
 list[Indicator] → crossmodal.py adds linked indicators → fusion.py → review UI (app.py) + HTML report (report.py)`
 
-## 2. Ownership: edit ONLY your own files
+## 2. Areas (no edit restriction)
 
-| Member | Owns (may edit) |
+Since 2026-11-19 the team works together on one laptop: **anyone may edit any file**, in any area below. The table
+says who knows an area best, not who may change it. Every other rule in this file still applies.
+
+| Member | Area |
 |---|---|
 | A: Image + Video | `truthlens/analyzers/image.py`, `truthlens/analyzers/video.py` |
 | B: Audio | `truthlens/analyzers/audio.py` |
 | C: Text + Cross-modal | `truthlens/analyzers/text.py`, `truthlens/crossmodal.py` |
 | D: Integration (lead) | everything else: `indicator.py`, `vault.py`, `llm.py`, `pipeline.py`, `fusion.py`, `report.py`, `app.py`, `test_smoke.py`, `calibrate.py`, `analyzers/__init__.py`, `analyzers/media_meta.py` |
-
-You may **import and call** functions from other files. You may **not change** them. If you need a change in a
-file you don't own, write the request in the team chat for its owner.
 
 ## 3. The contract: `truthlens/indicator.py` (frozen, do not change)
 
@@ -91,14 +91,14 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
    Cap noisy per-frame/per-window outputs: return at most the **top 10** indicators per detector per file.
 9. **Style:** match the existing code: plain functions, type hints on public functions, short docstring saying
    what the detector measures, numpy vectorised (no Python loops over pixels/samples). No print(); use `case.log`.
-10. **Before every commit:** `python test_smoke.py` must print `OK`. Commit only your own files.
+10. **Before every commit:** `python test_smoke.py` must print `OK`.
 11. **Ethics:** test media must be your own or of team members who consented. No public figures, no scraped faces.
 
 ## 5. Registries (use these exact names)
 
 **Indicator `type` names:**
 
-| Owner | types |
+| Area | types |
 |---|---|
 | A | `exif_missing` `exif_edit_software` `ela_hotspot` `noise_inconsistency` `copy_move` `reencoded` `no_creation_time` `temporal_spike` `face_texture_jump` `synthetic_provenance` `spectral_upsampling` `synthetic_visual_artifacts` `face_region_flicker` |
 | B | `reencoded` `audio_splice` `audio_click` `uniform_pauses` `synthetic_bandlimit` `synthetic_silence` `synthetic_prosody` |

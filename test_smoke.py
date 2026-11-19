@@ -189,6 +189,10 @@ try:
     assert [(i.type, i.score) for i in pv] == [("synthetic_provenance", 0.9)] and pv[0].alt_explanations, pv
     assert image.synthetic_provenance(case.dir / "evidence" / "spliced.jpg", case) == []
     assert report.content_credentials(case, pv) == []  # loose XMP tag, no signed manifest: no provenance banner
+    for ext, kind in ((".png", "image"), (".mp4", "video"), (".wav", "audio")):  # generator wording follows the media
+        g = case.artifact_path("gen" + ext)
+        g.write_bytes(b"\0" * 64 + b"<x:xmpmeta><xmp:CreatorTool>OpenAI</xmp:CreatorTool></x:xmpmeta>")
+        assert f"names an AI {kind} generator: openai" in image.synthetic_provenance(g, case)[0].explanation
     exe = os.getenv("C2PATOOL") or shutil.which("c2patool")
     if exe:  # sign with c2patool's built-in test certificate: verified when intact, failed once one byte changes
         man = case.artifact_path("c2pa_manifest.json")
