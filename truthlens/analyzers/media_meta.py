@@ -10,6 +10,12 @@ def ffprobe(path):
     return json.loads(out.stdout or "{}")
 
 
+def has_stream(meta, kind):
+    """Does ffprobe `meta` list a `kind` ("video" / "audio") stream? Cover art (attached_pic) is not video."""
+    return any(s.get("codec_type") == kind and not s.get("disposition", {}).get("attached_pic")
+               for s in meta.get("streams", []))
+
+
 def encoder_tags(meta):
     tags = {}
     for s in meta.get("streams", []):

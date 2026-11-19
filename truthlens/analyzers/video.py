@@ -7,13 +7,16 @@ import cv2
 import numpy as np
 from PIL import Image
 from ..indicator import Indicator
-from .media_meta import ffprobe, encoder_tags
+from .media_meta import ffprobe, encoder_tags, has_stream
 from . import image
 
 
 def analyze(path, case):
     meta = ffprobe(path)
     case.log("ffprobe", file=path.name, format=meta.get("format", {}).get("format_name"))
+    if not has_stream(meta, "video"):  # second guard (pipeline routes by streams): OpenCV can hang on these
+        case.log("check_not_run", check="video analysis", file=path.name, reason="no video stream")
+        return []
     tags = encoder_tags(meta)
     out = []
     enc = tags.get("encoder", "")
@@ -62,8 +65,12 @@ def scene_cuts(path, case):
         return []
 
 
+EDGE = 0.5  # s at each end not judged: recording start/stop and camera handling
+
+
 def temporal_spikes(path, case, cuts, z=4.0, top=10):
-    """Sudden frame-to-frame change (robust z of mean abs difference) more than 0.25 s from any scene cut."""
+    """Sudden frame-to-frame change (robust z of mean abs difference) more than 0.25 s from any scene cut and more
+    than EDGE s from either end of the clip."""
     cap = cv2.VideoCapture(str(path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     prev, d = None, []
@@ -83,7 +90,9 @@ def temporal_spikes(path, case, cuts, z=4.0, top=10):
     zs = (d - med) / (1.4826 * np.median(np.abs(d - med)) + 1e-6)
     cuts = np.array(cuts or [-1e9])
     n = np.arange(1, len(d) + 1)
-    hit = np.flatnonzero((zs > z) & (np.abs(n / fps - cuts[:, None]).min(axis=0) > 0.25))
+    end = (len(d) + 1) / fps
+    hit = np.flatnonzero((zs > z) & (np.abs(n / fps - cuts[:, None]).min(axis=0) > 0.25)
+                         & (n / fps >= EDGE) & (n / fps <= end - EDGE))
     out = []
     for k in hit[np.argsort(-zs[hit])][:top]:
         frame, t = int(n[k]), float(n[k] / fps)
@@ -94,7 +103,8 @@ def temporal_spikes(path, case, cuts, z=4.0, top=10):
             cv2.imwrite(str(art), f)
         out.append(Indicator(path.name, "video", "temporal_spike", float(min(1.0, zs[k] / 10)), "low",
                              f"Abrupt picture change at {t:.2f}s (frame {frame}, {zs[k]:.1f}σ above typical motion) "
-                             f"that is not a detected scene cut.",
+                             f"that is not a detected scene cut (0-{EDGE:g} s and {end - EDGE:.1f}-{end:.1f} s "
+                             f"not judged: recording start/stop).",
                              location={"t": t, "frame": frame}, artifact=str(art) if ok else None,
                              alt_explanations=["Camera flash or lighting change", "Fast motion", "Compression keyframe"]))
     cap.release()

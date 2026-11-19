@@ -81,21 +81,34 @@ def _ind(file_name, typ, t, score, why):
                      location={"start": max(0.0, t - 0.25), "end": t + 0.25}, alt_explanations=ALT)
 
 
+EDGE = 0.5      # s at each end not checked for splices/clicks: recording start/stop, handling noise
+FLOOR_DB = -96  # 16-bit dynamic range: no measured noise floor is quieter than this
+
+
 def splice_detection(y, sr, file_name, jump_db=6.0, z=8.0):
-    """(a) background noise-floor level jumps between 0.5 s windows, (b) sample-level clicks outside loud speech."""
+    """(a) background noise-floor level jumps between 0.5 s windows, (b) sample-level clicks outside loud speech.
+    The first and last EDGE s are not checked; exact digital silence (all-zero frames) has no noise floor and is skipped."""
+    e = int(EDGE * sr)
+    end = len(y) / sr
+    y = y[e:len(y) - e]
     db, hop = _frame_db(y, sr)
     if not len(db):
         return []
+    note = f" (0-{EDGE:g} s and {end - EDGE:.1f}-{end:.1f} s not checked: recording start/stop.)"
     out = []
     per = int(0.5 * sr / hop)  # frames per 0.5 s window
     nw = len(db) // per
     if nw >= 2:
-        floors = np.percentile(db[:nw * per].reshape(nw, per), 10, axis=1)
+        w = np.where(db <= -199, np.nan, np.clip(db, FLOOR_DB, 0))[:nw * per].reshape(nw, per)  # -200 dB = all zeros
+        ok = np.isfinite(w).sum(axis=1) >= per // 2  # a window that is mostly digital silence has no floor to compare
+        floors = np.full(nw, np.nan)
+        floors[ok] = np.nanpercentile(w[ok], 10, axis=1)
         jumps = np.abs(np.diff(floors))
-        i = np.flatnonzero(jumps > jump_db)
-        for t, j in _merge((i + 1) * per * hop / sr, jumps[i]):
+        i = np.flatnonzero(np.nan_to_num(jumps) > jump_db)
+        for t, j in _merge(EDGE + (i + 1) * per * hop / sr, jumps[i]):
             out.append(_ind(file_name, "audio_splice", t, j / 20,
-                            f"Background noise level changes by {j:.1f} dB at {t:.2f}s, as when two recordings are joined."))
+                            f"Background noise level changes by {j:.1f} dB at {t:.2f}s, as when two recordings are joined"
+                            + note))
     dx = np.abs(np.diff(y))
     med = np.median(dx)
     zs = (dx - med) / (1.4826 * np.median(np.abs(dx - med)) + 1e-9)
@@ -103,9 +116,10 @@ def splice_detection(y, sr, file_name, jump_db=6.0, z=8.0):
     # ignore steep edges inside loud speech; level = 110 ms median so the click doesn't make its own frame "loud"
     level = np.median(np.lib.stride_tricks.sliding_window_view(np.pad(db, 5, mode="edge"), 11), axis=1)
     idx = idx[level[np.minimum(idx // hop, len(db) - 1)] < np.median(db) + 3]
-    for t, zv in _merge(idx / sr, zs[idx]):
+    for t, zv in _merge(EDGE + idx / sr, zs[idx]):
         out.append(_ind(file_name, "audio_click", t, zv / 40,
-                        f"Sample-level discontinuity ({zv:.0f}σ) at {t:.2f}s in a quiet passage, typical of a hard cut."))
+                        f"Sample-level discontinuity ({zv:.0f}σ) at {t:.2f}s in a quiet passage, typical of a hard cut"
+                        + note))
     return out
 
 

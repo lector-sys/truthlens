@@ -1,6 +1,7 @@
 """python test_smoke.py: end-to-end check of vault, image analyzer, fusion, cross-modal, report."""
 import http.server, io, json, os, re, shutil, socket, subprocess, threading, time, wave
 from types import SimpleNamespace as NS
+import cv2
 import numpy as np
 from PIL import Image
 from truthlens.vault import Case
@@ -400,6 +401,83 @@ try:
     finally:
         llm.WHISPER_URL, llm._post = "", post
         wcase.delete()
+
+    # real-file bugs (2026-11-19): routing by streams, watchdog, digital silence, recording edges, no double counting
+    def wav_bytes(y, sr=16000):
+        b = io.BytesIO()
+        with wave.open(b, "wb") as w:
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(sr)
+            w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
+        return b.getvalue()
+
+    noise = lambda s, db: rng.normal(0, 10 ** (db / 20), int(s * 16000))
+    rc = Case("smoke_realfile")
+    try:
+        # audio-only .mp4 (it hung OpenCV): takes the audio path, the video analyzer is never called
+        src = rc.artifact_path("tone.wav")
+        src.write_bytes(wav_bytes(noise(3, -30)))
+        mp4 = rc.artifact_path("voice.m4a.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-c:a", "aac", str(mp4)], check=True)
+        rc.ingest("voice.m4a.mp4", mp4.read_bytes())
+        r = pipeline.run(rc, "")
+        routed = [e for e in rc.entries() if e["action"] == "routed"]
+        assert routed[0]["analyzers"] == ["truthlens.analyzers.audio"], routed
+        assert "audio analysis · voice.m4a.mp4" in r["coverage"]["ran"] and not r["headline"].startswith("Failed"), r["coverage"]
+        assert not any(e["action"] == "frame_sampling_failed" for e in rc.entries())
+        assert video.analyze(rc.dir / "evidence" / "voice.m4a.mp4", rc) == []  # second guard
+        assert rc.entries()[-1] == {**rc.entries()[-1], "action": "check_not_run", "reason": "no video stream"}
+    finally:
+        rc.delete()
+
+    # watchdog: an analyzer that hangs fails "timed out", the case still ends with a result and says so
+    wd = Case("smoke_watchdog")
+    slow, base = audio.analyze, pipeline.WATCHDOG_S
+    audio.analyze, pipeline.WATCHDOG_S, pipeline.WATCHDOG_PER_S = lambda p, c: time.sleep(3) or [], 0.5, 0.0
+    try:
+        wd.ingest("hang.wav", wav_bytes(noise(1, -30)))
+        t = time.time()
+        r = pipeline.run(wd, "")
+        assert time.time() - t < 2.5, "watchdog did not fire"
+        assert r["coverage"]["not_run"]["audio analysis · hang.wav"] == "failed: timed out after 0.5 s", r["coverage"]
+        assert "failed: timed out" in pipeline.coverage_line(r["coverage"]) and (wd.dir / "result.json").exists()
+    finally:
+        audio.analyze, pipeline.WATCHDOG_S, pipeline.WATCHDOG_PER_S = slow, base, 2.0
+        time.sleep(2.6)  # let the abandoned worker finish before its case folder is deleted
+        wd.delete()
+
+    # digital zeros at the start (phone recorders): no splice; a real noise-floor jump mid-file still found
+    zeros_then_room = np.concatenate([np.zeros(4000), noise(4, -43)])
+    assert not [i for i in audio.splice_detection(zeros_then_room, 16000, "z.wav") if i.type == "audio_splice"]
+    dropout = np.concatenate([noise(1.5, -43), np.zeros(8000), noise(1.5, -43)])  # 0.5 s of zeros mid-file
+    assert all(float(i.explanation.split("by ")[1].split(" dB")[0]) <= 96 for i in audio.splice_detection(dropout, 16000, "d.wav")
+               if i.type == "audio_splice")
+    joined = np.concatenate([noise(2, -60), noise(2, -30)])
+    sp = [i for i in audio.splice_detection(joined, 16000, "j.wav") if i.type == "audio_splice"]
+    assert len(sp) == 1 and abs(sp[0].location["start"] + 0.25 - 2.0) < 0.3 and "not checked" in sp[0].explanation, sp
+    # recording edges: a level jump inside the last 0.5 s is not judged
+    assert not [i for i in audio.splice_detection(np.concatenate([noise(3.7, -60), noise(0.3, -20)]), 16000, "e.wav")
+                if i.type == "audio_splice"]
+
+    # video: motion only in the last 0.5 s (camera handling) is not a temporal spike; the same jolt mid-clip is
+    def clip(name, jolt_at):
+        p = case.artifact_path(name)
+        vw = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"MJPG"), 25, (160, 120))
+        base_img = rng.integers(0, 255, (120, 160, 3), dtype=np.uint8)
+        for f in range(100):  # 4 s
+            img = np.clip(base_img.astype(int) + rng.integers(-2, 3, base_img.shape), 0, 255).astype(np.uint8)
+            vw.write(255 - img if f in jolt_at else img)
+        vw.release()
+        return p
+    assert video.temporal_spikes(clip("end.avi", {93, 96}), case, []) == []
+    mid = video.temporal_spikes(clip("mid.avi", {50}), case, [])
+    assert mid and all(0.5 <= i.location["t"] <= 3.5 for i in mid) and "not judged" in mid[0].explanation, mid
+
+    # fusion: an A/V alignment adds at most ALIGN_BONUS on top of the flags it links
+    w8 = {"audio_splice/video": 0.52, "av_aligned_flags/video": 0.52}
+    sp_i = Indicator("v.mp4", "audio", "audio_splice", 1.0, "low", "x", {"start": 2, "end": 2.5}, None, ["y"])
+    al_i = Indicator("v.mp4", "cross", "av_aligned_flags", 1.0, "medium", "x", {"t": 2.1}, None, ["y"])
+    assert fusion.contributions([al_i], w8)[("v.mp4", "av_aligned_flags")] == fusion.ALIGN_BONUS
+    assert abs(fusion.combine([sp_i, al_i], w8) - (1 - 0.48 * 0.9)) < 1e-9
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
     case.delete()

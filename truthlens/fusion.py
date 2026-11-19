@@ -1,6 +1,9 @@
 """OWNER D. Rule-based fusion. Weights per (indicator type, media of the evidence file) come from calibration.json
 (written by `python calibrate.py`, committed); a pair it has no data for weighs 0. With no calibration loaded every
-weight is 0 and the dashboard and report show MISSING in red: no silent fallback."""
+weight is 0 and the dashboard and report show MISSING in red: no silent fallback.
+
+No double counting: an av_aligned_flags finding links a video flag and an audio flag that already count on their
+own, so the alignment adds at most ALIGN_BONUS: one event's total is its own flags plus that small bonus."""
 import json
 from pathlib import Path
 CALIBRATION = Path(__file__).resolve().parent.parent / "calibration.json"
@@ -41,6 +44,9 @@ def headline(assessment, coverage, file=None):
 
 
 UNCALIBRATED = "uncalibrated (not counted in label)"
+ALIGN_BONUS = 0.10
+ALIGN_RULE = (f"A/V alignment findings add at most {ALIGN_BONUS:.2f} to the label: the video and audio flags they link "
+              "are already counted on their own, so one event is never counted twice.")
 
 
 def media(file):
@@ -76,8 +82,8 @@ def contributions(indicators, weights=None):
     """{(file, type): strongest score*weight}: what the noisy-OR actually combines (the "why this label" bars)."""
     best = {}
     for i in indicators:
-        k = (i.file, i.type)
-        best[k] = max(best.get(k, 0.0), i.score * weight(i, weights))
+        k, v = (i.file, i.type), i.score * weight(i, weights)
+        best[k] = max(best.get(k, 0.0), min(v, ALIGN_BONUS) if i.type == "av_aligned_flags" else v)
     return best
 
 

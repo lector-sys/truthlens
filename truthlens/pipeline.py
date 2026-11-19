@@ -1,33 +1,83 @@
-import dataclasses, json
+import dataclasses, json, threading
 from . import analyzers, crossmodal, fusion, llm, report
 from .analyzers import text as text_analyzer, image, IMAGE_EXTS, TEXT_EXTS
+from .analyzers.media_meta import ffprobe, has_stream
 from .indicator import Indicator
 
-C2PA_AUDIO = (".wav", ".mp3", ".m4a", ".flac")  # audio c2patool 0.27 signs (not .ogg)
+WATCHDOG_S, WATCHDOG_PER_S = 60.0, 2.0  # an analyzer gets 60 s + 2 s per second of media, then counts as failed
+
+
+def route(path, case):
+    """(analyzers, media seconds) for one evidence file, logged as "routed" (coverage reads it back). Audio/video go by
+    the streams ffprobe finds, not the extension: an audio-only .mp4 takes the audio path, a silent video skips audio."""
+    mods, dur = analyzers.BY_EXT.get(path.suffix.lower(), ()), 0.0
+    if analyzers.video in mods or analyzers.audio in mods:
+        meta = ffprobe(path)
+        dur = float(meta.get("format", {}).get("duration") or 0)
+        mods = tuple(m for m, kind in ((analyzers.video, "video"), (analyzers.audio, "audio")) if has_stream(meta, kind))
+    case.log("routed", file=path.name, analyzers=[m.__name__ for m in mods], seconds=dur)
+    return mods, dur
+
+
+def guarded(fn, limit, *args):
+    """fn(*args) with a time limit: TimeoutError after `limit` s, so a hung decoder can't stall the case."""
+    # ponytail: a timed-out worker thread can't be killed and runs on until it returns; run analyzers in a child
+    # process if a real hang keeps burning CPU (routing by streams removed the one we've seen).
+    box = {}
+
+    def work():
+        try:
+            box["ok"] = fn(*args)
+        except BaseException as e:  # handed back to the caller below
+            box["err"] = e
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(limit)
+    if t.is_alive():
+        raise TimeoutError(f"timed out after {round(limit, 1):g} s")
+    if "err" in box:
+        raise box["err"]
+    return box["ok"]
+
+
+def mark_failed(case, why):
+    """Close a case that could not finish: logged, and a result.json saying so, so it never looks like a pending run."""
+    case.log("analysis_failed", reason=why)
+    (case.dir / "result.json").write_text(json.dumps({"indicators": [], "context": "", "failed": why}), encoding="utf-8")
 
 
 def run(case, context_text="", progress=lambda step, state: None):
     """Analyze every evidence file, then context text, cross-modal checks and fusion. `progress(step, state)` is called
-    with state "running" / "done" / "error" for each step so a UI can show live status. Result saved to result.json."""
+    with state "running" / "done" / "error" for each step so a UI can show live status. Result saved to result.json.
+    Anything that escapes leaves the case marked failed (never half-finished)."""
+    try:
+        return _run(case, context_text, progress)
+    except Exception as e:
+        mark_failed(case, f"analysis did not complete ({e!r})"[:300])
+        raise
+
+
+def _run(case, context_text, progress):
     indicators = []
     for path in case.evidence():
-        mods = analyzers.BY_EXT.get(path.suffix.lower())
+        mods, dur = route(path, case)
         if not mods:
-            case.log("skipped", file=path.name, reason="unsupported type")
+            case.log("skipped", file=path.name, reason="no audio or video stream" if dur else "unsupported type")
             continue
         for mod in mods:
             step = f"{mod.__name__.rsplit('.', 1)[1]} · {path.name}"
             progress(step, "running")
             try:
-                found = mod.analyze(path, case)
-            except Exception as e:  # one broken analyzer must not kill the case
-                case.log("analyzer_error", file=path.name, analyzer=mod.__name__, error=repr(e))
+                found = guarded(mod.analyze, WATCHDOG_S + WATCHDOG_PER_S * dur, path, case)
+            except Exception as e:  # one broken or hung analyzer must not kill the case
+                case.log("analyzer_error", file=path.name, analyzer=mod.__name__,
+                         error=str(e) if isinstance(e, TimeoutError) else repr(e))
                 progress(step, "error")
                 continue
             case.log("analyzed", file=path.name, analyzer=mod.__name__, n=len(found))
             progress(step, "done")
             indicators += found
-        if path.suffix.lower() in C2PA_AUDIO:  # Content Credentials in audio: display only, the audio pair has no weight
+        if analyzers.audio in mods and analyzers.video not in mods:  # Content Credentials in audio: display only
             try:
                 indicators += [dataclasses.replace(i, modality="audio") for i in image.synthetic_provenance(path, case)]
             except Exception as e:
@@ -63,7 +113,7 @@ def load(case):
     inds = [Indicator(**d) for d in r["indicators"]]
     a, cov = fusion.assess(inds), coverage(case, r.get("context", ""))
     return {**r, "indicators": inds, "assessment": a, "integrity": case.verify(), "coverage": cov,
-            "headline": fusion.headline(a, cov)}
+            "headline": "Failed: " + r["failed"] if r.get("failed") else fusion.headline(a, cov)}
 
 
 def all_text(case, context_text=""):
@@ -82,7 +132,11 @@ def coverage(case, context_text=""):
     "files": {file: {"analysed": n, "why"}}}. A check counts as run only if it produced a result (even "nothing found")."""
     log, ev = case.entries(), case.evidence()
     context_text = all_text(case, context_text)  # text evidence files count as claims to check, like a caption
-    kinds = {k for p in ev for m in analyzers.BY_EXT.get(p.suffix.lower(), ()) for k in [m.__name__.rsplit(".", 1)[1]]}
+    routed = {e["file"]: e["analyzers"] for e in log if e["action"] == "routed"}  # older cases: by extension
+
+    def mods_of(p):
+        return routed[p.name] if p.name in routed else [m.__name__ for m in analyzers.BY_EXT.get(p.suffix.lower(), ())]
+    kinds = {m.rsplit(".", 1)[1] for p in ev for m in mods_of(p)}
     calls = {e["check"] for e in log if e["action"] == "llm_call"}
     skipped = {}
     for e in log:
@@ -92,7 +146,7 @@ def coverage(case, context_text=""):
     for p in ev:
         done = {e["analyzer"] for e in log if e["action"] == "analyzed" and e["file"] == p.name}
         skip = next((e["reason"] for e in log if e["action"] == "skipped" and e["file"] == p.name), None)
-        mods = [m.__name__ for m in analyzers.BY_EXT.get(p.suffix.lower(), ())] or sorted(done)
+        mods = mods_of(p) or sorted(done)
         if not mods or (skip and not done):
             why = f"{skip or 'unsupported file type'} ({p.suffix or 'no extension'})"
             checks[f"analysis · {p.name}"] = why
@@ -101,11 +155,12 @@ def coverage(case, context_text=""):
         for m in mods:
             err = next((e["error"] for e in log if e["action"] == "analyzer_error" and e["file"] == p.name
                         and e["analyzer"] == m), None)
-            checks[f"{m.rsplit('.', 1)[1]} analysis · {p.name}"] = None if m in done else f"error: {err[:80]}" if err else "not run"
+            checks[f"{m.rsplit('.', 1)[1]} analysis · {p.name}"] = None if m in done else f"failed: {err[:80]}" if err else "not run"
         files[p.name] = {"analysed": len(done)} if done else {"analysed": 0, "why": "every analyzer failed"}
-    want = ["claims"] + ["caption_consistency"] * bool(kinds & {"image", "video"})         + ["synthetic_visual_artifacts"] * ("image" in kinds) + ["transcribe"] * any(
-            p.suffix.lower() in analyzers.BY_EXT and analyzers.audio in analyzers.BY_EXT[p.suffix.lower()]
-            and not any(e["action"] == "no_audio" and e["file"] == p.name for e in log) for p in ev)
+    want = (["claims"] + ["caption_consistency"] * bool(kinds & {"image", "video"})
+            + ["synthetic_visual_artifacts"] * ("image" in kinds) + ["transcribe"] * any(
+                analyzers.audio.__name__ in mods_of(p) and not any(e["action"] == "no_audio" and e["file"] == p.name
+                                                                 for e in log) for p in ev))
     for c in want:
         needs_text = c in ("claims", "caption_consistency")
         checks[SEMANTIC[c]] = ("no caption or claims text supplied" if needs_text and not context_text else

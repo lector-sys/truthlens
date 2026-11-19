@@ -48,6 +48,7 @@ compression-based checks (ELA) see the conversion, not the original. The evidenc
 <h2>Limitations</h2><ul>
 <li>Detectors are heuristics tuned on a small team-made test set; reliability labels reflect that, not a guarantee.</li>
 <li>Re-compression, resizing and platform uploads can create or hide indicators.</li>
+<li>{{ align_rule }}</li>
 <li>The language model reads text, compares captions with images and lists visible artifacts with their location; it is never asked to judge authenticity.</li>
 <li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
 <li>Absence of indicators does not prove the media is unaltered.</li></ul>
@@ -166,7 +167,7 @@ def render(case, result):
     groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
               "Context": "the caption or claims disagree with the media"}
     group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
-    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, coverage_line=pipeline.coverage_line(cov), groups=groups,
+    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, align_rule=fusion.ALIGN_RULE, coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
                            calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
