@@ -1,6 +1,6 @@
 import json
 from . import analyzers, crossmodal, fusion, llm, report
-from .analyzers import text as text_analyzer
+from .analyzers import text as text_analyzer, IMAGE_EXTS
 from .indicator import Indicator
 
 
@@ -37,6 +37,10 @@ def run(case, context_text="", progress=lambda step, state: None):
     case.log("assessed", **result["assessment"]["case"])
     report.summary(result, case)  # once per run, saved below: viewing the case must not call (or log) the model again
     result["source"] = llm.source(case.entries())  # "live" or "result from cache (date)"
+    result["coverage"] = coverage(case, context_text)
+    result["headline"] = fusion.headline(result["assessment"], result["coverage"])
+    case.log("coverage", ran=len(result["coverage"]["ran"]), total=result["coverage"]["total"],
+             not_run=result["coverage"]["not_run"], headline=result["headline"])
     (case.dir / "result.json").write_text(json.dumps({**result, "indicators": [i.to_dict() for i in indicators]}),
                                           encoding="utf-8")
     return result
@@ -50,4 +54,60 @@ def load(case):
         return None
     r = json.loads(p.read_text(encoding="utf-8"))
     inds = [Indicator(**d) for d in r["indicators"]]
-    return {**r, "indicators": inds, "assessment": fusion.assess(inds), "integrity": case.verify()}
+    a, cov = fusion.assess(inds), coverage(case, r.get("context", ""))
+    return {**r, "indicators": inds, "assessment": a, "integrity": case.verify(), "coverage": cov,
+            "headline": fusion.headline(a, cov)}
+
+
+SEMANTIC = {"claims": "claims from the caption", "caption_consistency": "caption ↔ image / frames",
+            "synthetic_visual_artifacts": "visual artifacts (model)", "transcribe": "transcript"}
+
+
+def coverage(case, context_text=""):
+    """Which checks ran, from the case log: {"ran": [...], "not_run": {check: why}, "total", "analysed",
+    "files": {file: {"analysed": n, "why"}}}. A check counts as run only if it produced a result (even "nothing found")."""
+    log, ev = case.entries(), case.evidence()
+    kinds = {k for p in ev for m in analyzers.BY_EXT.get(p.suffix.lower(), ()) for k in [m.__name__.rsplit(".", 1)[1]]}
+    calls = {e["check"] for e in log if e["action"] == "llm_call"}
+    skipped = {}
+    for e in log:
+        if e["action"] == "check_not_run":
+            skipped.setdefault(e["check"], e["reason"])
+    checks, files = {}, {}
+    for p in ev:
+        done = {e["analyzer"] for e in log if e["action"] == "analyzed" and e["file"] == p.name}
+        skip = next((e["reason"] for e in log if e["action"] == "skipped" and e["file"] == p.name), None)
+        mods = [m.__name__ for m in analyzers.BY_EXT.get(p.suffix.lower(), ())] or sorted(done)
+        if not mods or (skip and not done):
+            why = f"{skip or 'unsupported file type'} ({p.suffix or 'no extension'})"
+            checks[f"analysis · {p.name}"] = why
+            files[p.name] = {"analysed": 0, "why": why}
+            continue
+        for m in mods:
+            err = next((e["error"] for e in log if e["action"] == "analyzer_error" and e["file"] == p.name
+                        and e["analyzer"] == m), None)
+            checks[f"{m.rsplit('.', 1)[1]} analysis · {p.name}"] = None if m in done else f"error: {err[:80]}" if err else "not run"
+        files[p.name] = {"analysed": len(done)} if done else {"analysed": 0, "why": "every analyzer failed"}
+    want = ["claims"] + ["caption_consistency"] * bool(kinds & {"image", "video"})         + ["synthetic_visual_artifacts"] * ("image" in kinds) + ["transcribe"] * any(
+            p.suffix.lower() in analyzers.BY_EXT and analyzers.audio in analyzers.BY_EXT[p.suffix.lower()]
+            and not any(e["action"] == "no_audio" and e["file"] == p.name for e in log) for p in ev)
+    for c in want:
+        needs_text = c in ("claims", "caption_consistency")
+        checks[SEMANTIC[c]] = ("no caption or claims text supplied" if needs_text and not context_text else
+                               None if c in calls else skipped.get(c, "not run"))
+    checks["claimed date ↔ metadata"] = None if context_text else "no caption or claims text supplied"
+    for c, why in skipped.items():  # detector-level skips (e.g. EXIF lost in a format conversion)
+        if c not in SEMANTIC:
+            checks[c] = why
+    not_run = {c: w for c, w in checks.items() if w}
+    return {"ran": [c for c, w in checks.items() if not w], "not_run": not_run, "total": len(checks),
+            "analysed": sum(f["analysed"] for f in files.values()), "why": "; ".join(f"{k}: {v['why']}" for k, v in files.items() if not v["analysed"]),
+            "files": files}
+
+
+def coverage_line(cov):
+    """"Checks run: X of Y. Not run: a (why); b (why)." or None when everything ran."""
+    if not cov["not_run"]:
+        return None
+    return (f"Checks run: {len(cov['ran'])} of {cov['total']}. Not run: "
+            + "; ".join(f"{c} ({w})" for c, w in cov["not_run"].items()) + ".")

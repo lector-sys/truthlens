@@ -18,7 +18,9 @@ TEMPLATE = Template("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>T
 table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}</style>
 </head><body>
 <h1>TruthLens forensic report: {{ case.id }}</h1>
-<p><b>Overall:</b> {{ a.case.label }} (indicator strength {{ '%.2f' % a.case.p }}).</p>
+{% if headline.startswith('Not analysed') %}<p style="color:#64748B"><b>Overall: {{ headline }}.</b> No analyzer ran, so no label is given.</p>
+{% else %}<p><b>Overall:</b> {{ headline }} (indicator strength {{ '%.2f' % a.case.p }}).</p>{% endif %}
+{% if coverage_line %}<p style="color:#64748B">{{ coverage_line }}</p>{% endif %}
 <p class="note">Automated indicators, not proof. All findings require human review.</p>
 <p class="note">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
 {% if provenance %}<p class="note">{{ provenance }} Model answers: {{ source }}.</p>{% endif %}
@@ -26,18 +28,23 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 <h2>Evidence & integrity</h2>
 <table><tr><th>File</th><th>SHA-256</th><th>Unchanged since ingest</th><th>Assessment</th></tr>
 {% for e in ingests %}<tr><td>{{ e.file }}</td><td><code>{{ e.sha256 }}</code></td><td>{{ 'yes' if integrity.get(e.file) else 'NO' }}</td>
-<td>{{ a.files.get(e.file, {}).get('label', 'No significant indicators') }}</td></tr>{% endfor %}</table>
+<td>{{ file_headline(e.file) }}</td></tr>{% endfor %}</table>
+{% for e in conversions %}<p class="note">{{ e.file }} was analysed via {{ e.to }} (converted with {{ e.tool }}, sha256 {{ e.sha256 }}):
+compression-based checks (ELA) see the conversion, not the original. The evidence hash is the original file's.</p>{% endfor %}
 <h2>Flagged evidence</h2>
-{% if not indicators %}<p>No indicators were raised.</p>{% else %}
+{% if not indicators %}<p>No indicators were raised.</p>{% endif %}
+{% for g, what in groups.items() %}{% set grp = rows|selectattr('0.type', 'in', group_types[g])|list %}{% if grp %}
+<h3>{{ g }}: {{ what }}</h3>
 <table><tr><th>File</th><th>Indicator</th><th>Location</th><th>Score / reliability</th><th>Why</th><th>Could also be</th><th>Evidence</th></tr>
-{% for i, img in rows %}<tr><td>{{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %}</td><td>{{ i.modality }} · {{ i.type }}</td>
-<td>{{ i.location }}</td><td>{{ '%.2f' % i.score }} / {{ i.reliability }}</td><td>{{ i.explanation }}</td>
-<td>{{ i.alt_explanations|join('; ') }}</td><td>{% if img %}<img src="{{ img }}" alt="{{ i.type }} artifact">{% endif %}</td></tr>{% endfor %}</table>{% endif %}
+{% for i, img in grp %}<tr><td>{{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %}</td><td>{{ i.modality }} · {{ i.type }}</td>
+<td>{{ i.location }}</td><td>{{ '%.2f' % i.score }} / {{ i.reliability }}{% if not calibrated(i) %}<br><i>{{ uncal }}</i>{% endif %}</td><td>{{ i.explanation }}</td>
+<td>{{ i.alt_explanations|join('; ') }}</td><td>{% if img %}<img src="{{ img }}" alt="{{ i.type }} artifact">{% endif %}</td></tr>{% endfor %}</table>{% endif %}{% endfor %}
 <h2>Recommended human checks</h2><ol>{% for c in checks %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
 <h2>Limitations</h2><ul>
 <li>Detectors are heuristics tuned on a small team-made test set; reliability labels reflect that, not a guarantee.</li>
 <li>Re-compression, resizing and platform uploads can create or hide indicators.</li>
-<li>The language model is used only to read text and compare captions with images, never to judge authenticity.</li>
+<li>The language model reads text, compares captions with images and lists visible artifacts with their location; it is never asked to judge authenticity.</li>
+<li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
 <li>Absence of indicators does not prove the media is unaltered.</li></ul>
 <h2>Analysis log</h2><pre>{% for e in log %}{{ e }}
 {% endfor %}</pre></body></html>""")
@@ -76,7 +83,8 @@ def summary(result, case=None):
     """LLM summary from indicators only; cached on the result so Streamlit reruns don't re-bill the API."""
     if "summary" not in result:
         a, inds = result["assessment"], result["indicators"]
-        data = json.dumps({"assessment": a, "indicators": [i.to_dict() for i in inds]}, default=str)
+        data = json.dumps({"assessment": a, "indicators": [{**i.to_dict(), "counted_in_label": fusion.calibrated(i)}
+                                                           for i in inds]}, default=str)
         r = llm.ask_json(SUMMARY_PROMPT, llm.untrusted("indicators", data), schema=SUMMARY_SCHEMA, name="summary",
                          version=SUMMARY_VERSION, effort="low", case=case)
         top = [k for k, v in sorted(fusion.contributions(inds).items(), key=lambda kv: -kv[1]) if v > 0][:3]
@@ -99,6 +107,15 @@ def render(case, result):
     semantic = ", ".join(sorted({f"{e['model']}, prompt {e.get('prompt_version', '?')}" for e in calls})) or "none run"
     if skipped:
         semantic += f" (not run: {', '.join(skipped)})"
-    return TEMPLATE.render(calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
+    from . import pipeline  # here: pipeline imports report
+    cov = result.get("coverage") or pipeline.coverage(case, result.get("context", ""))
+    a = result["assessment"]
+    groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
+              "Context": "the caption or claims disagree with the media"}
+    group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
+    return TEMPLATE.render(calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), coverage_line=pipeline.coverage_line(cov), groups=groups,
+                           group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
+                           conversions=[e for e in log if e["action"] == "converted"],
+                           calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
                            integrity=result["integrity"], ingests=[e for e in log if e["action"] == "ingest"],
                            log=log, checks=checks, summary=summary(result, case))

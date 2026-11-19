@@ -8,13 +8,18 @@ from PIL import Image, ImageDraw
 from rapidfuzz import fuzz
 from truthlens.vault import Case, CASES, sha256
 from truthlens import pipeline, report, fusion, llm
+from truthlens.analyzers import IMAGE_EXTS
+from truthlens.analyzers.media_meta import readable_image
 
-IMAGE = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff")
+IMAGE = IMAGE_EXTS
 VIDEO = (".mp4", ".mov", ".mkv", ".webm", ".avi")
 AUDIO = (".wav", ".mp3", ".m4a", ".flac", ".ogg")
-LEVELS = ["No significant indicators", "Weak indicators", "Moderate indicators", "Strong indicators"]
-LEVEL = {"No significant indicators": ("#64748B", "○", "No"), "Weak indicators": ("#A3B18A", "◔", "Weak"),
-         "Moderate indicators": ("#F2B544", "◑", "Moderate"), "Strong indicators": ("#F97352", "●", "Strong")}
+LEVELS = [name for _, name in reversed(fusion.LEVELS)]  # No, Weak, Moderate, Strong
+LEVEL = dict(zip(LEVELS, [("#64748B", "○", "No"), ("#A3B18A", "◔", "Weak"), ("#F2B544", "◑", "Moderate"),
+                          ("#F97352", "●", "Strong")]))
+GREY = ("#64748B", "–", "Not analysed")  # "Not analysed: ..." and "Limited analysis: ..." headlines
+GROUPS = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
+          "Context": "the caption or claims disagree with the media"}
 LAYER = {"ELA": ("_ela.png", (56, 189, 248)), "Noise map": ("_noise.png", (242, 181, 68))}
 SCREENS = ["Overview", "Evidence", "Cross-media", "Findings", "Calibration", "Custody"]
 HIDDEN = ("smoke_test", "calib_", "probe_")
@@ -52,7 +57,7 @@ def md(s):
 
 
 def pill(label):
-    c, icon, _ = LEVEL[label]
+    c, icon, _ = LEVEL.get(label, GREY)
     return f'<span class="pill" style="color:{c};border-color:{c}">{icon} {e(label)}</span>'
 
 
@@ -78,7 +83,8 @@ def card(i):
     c = LEVEL[fusion.label(i.score * fusion.weight(i))][0]
     rel = " ↔ " + e(", ".join(i.related)) if i.related else ""
     md(f'<div class="card" style="--c:{c}"><b>{e(i.type)}</b> <span class="muted small">· {e(i.modality)} · {e(i.file)}{rel}</span>'
-       f'<span class="mono small" style="float:right">score {i.score:.2f} × weight {fusion.weight(i):.2f}</span><br>'
+       f'<span class="mono small" style="float:right">score {i.score:.2f} '
+       + (f'× weight {fusion.weight(i):.2f}' if fusion.calibrated(i) else f'· {fusion.UNCALIBRATED}') + '</span><br>'
        f'<span class="mono small muted">{e(where(i.location))}</span><br>{e(i.explanation)}<br>'
        f'<span class="muted small">Could also be: {e("; ".join(i.alt_explanations))}</span></div>')
 
@@ -138,7 +144,7 @@ with st.sidebar:
     cur = qp.get("case", ids[1] if len(ids) > 1 else ids[0])
     pick = st.radio("Cases", ids, index=ids.index(cur) if cur in ids else 0,
                     format_func=lambda c: c if c.startswith("＋") else
-                    f"{LEVEL[load(c, mtime(c))['assessment']['case']['label']][1]}  {c}")
+                    f"{LEVEL.get(load(c, mtime(c))['headline'], GREY)[1]}  {c}")
     if pick != cur:
         qp["case"] = pick
         qp.pop("file", None)
@@ -198,7 +204,8 @@ not_run = {x["check"]: x["reason"] for x in log if x["action"] == "check_not_run
 llm_calls = [x for x in log if x["action"] == "llm_call"]
 
 top_l, top_r = st.columns([2, 3])
-top_l.markdown(f"## {e(case.id)} {pill(a['case']['label'])}", unsafe_allow_html=True)
+top_l.markdown(f"## {e(case.id)} {pill(res['headline'])}", unsafe_allow_html=True)
+cov_line = pipeline.coverage_line(res["coverage"])
 want = qp.get("screen", "Overview")
 screen = top_r.radio("Screen", SCREENS, horizontal=True, label_visibility="collapsed",
                      index=SCREENS.index(want) if want in SCREENS else 0)
@@ -243,9 +250,16 @@ def tt(i):
 if screen == "Overview":
     c1, c2 = st.columns([2, 3])
     with c1:
-        md('<div class="panel" style="text-align:center">' + gauge(a["case"]["label"], a["case"]["p"]) +
-           f'<div class="mono small muted">fused strength {a["case"]["p"]:.2f}</div>'
-           '<div style="margin-top:8px">Automated indicators, not proof. Review each finding below.</div></div>')
+        if res["headline"].startswith("Not analysed"):
+            md(f'<div class="panel" style="text-align:center;color:#8B98A5"><div style="font-size:1.3rem">– {e(res["headline"])}</div>'
+               '<div style="margin-top:8px">No analyzer ran on this evidence, so no label is given.</div></div>')
+        else:
+            md('<div class="panel" style="text-align:center">' + gauge(a["case"]["label"], a["case"]["p"]) +
+               f'<div class="mono small muted">fused strength {a["case"]["p"]:.2f}</div>'
+               + (f'<div style="margin-top:6px;color:#8B98A5"><b>{e(res["headline"])}</b></div>' if res["headline"] == fusion.LIMITED else "")
+               + '<div style="margin-top:8px">Automated indicators, not proof. Review each finding below.</div></div>')
+        if cov_line:
+            md(f'<div class="panel small" style="border-color:#64748B">{e(cov_line)}</div>')
         if cal:
             h = cal["held_out"]
             md(f'<div class="panel small">{dataset_badge(cal)}<br><span class="muted">How sure is this label? On the held-out '
@@ -290,7 +304,10 @@ elif screen == "Evidence":
     ext, stem = path.suffix.lower(), path.stem
     mine = sorted((i for i in inds if i.file == fname), key=lambda i: -i.score)
     digest = next((x["sha256"] for x in log if x["action"] == "ingest" and x["file"] == fname), "?")
-    md(f'{pill(a["files"].get(fname, {}).get("label", LEVELS[0]))} <span class="mono small muted">sha256 {e(digest)}</span>')
+    md(f'{pill(fusion.headline(a, res["coverage"], fname))} <span class="mono small muted">sha256 {e(digest)}</span>')
+    if conv := next((x for x in log if x["action"] == "converted" and x["file"] == fname), None):
+        md(f'<div class="muted small">Shown and analysed via {e(conv["to"])} (converted with {e(conv["tool"])}): '
+           'compression-based checks (ELA) see the conversion, not the original. Evidence hash above is the original file.</div>')
     if ext in IMAGE:
         c1, c2 = st.columns([1, 4])
         with c1:
@@ -298,9 +315,10 @@ elif screen == "Evidence":
             layers = st.multiselect("Overlay layers", avail, default=avail[1:2] or avail[:1])
             opacity = st.slider("Opacity", 0.0, 1.0, 0.6)
             boxes = st.toggle("Flagged boxes", True)
+            model_boxes = any(i.type == "synthetic_visual_artifacts" for i in mine) and st.toggle("Model-listed artifacts", True)
             cm = case.artifact_path(stem + "_copymove.png")
             show_cm = cm.exists() and st.toggle("Copy-move pairs", True)
-        base = Image.open(path).convert("RGBA")
+        base = Image.open(readable_image(path, case) or path).convert("RGBA")
         out = base.copy()
         for k in layers:
             suf, rgb = LAYER[k]
@@ -312,14 +330,24 @@ elif screen == "Evidence":
         if boxes:
             d = ImageDraw.Draw(out)
             for i in mine:
+                if i.type == "synthetic_visual_artifacts":
+                    continue
                 for key in ("bbox", "bbox2"):
                     if key in i.location:
                         x, y, w, hh = i.location[key]
                         d.rectangle([x, y, x + w, y + hh], outline="#F2B544", width=max(2, base.width // 300))
                         d.text((x + 4, y + 4), i.type, fill="#F2B544")
+        if model_boxes:
+            d = ImageDraw.Draw(out)
+            for i in mine:
+                if i.type == "synthetic_visual_artifacts":
+                    x, y, w, hh = i.location["bbox"]
+                    d.rectangle([x, y, x + w, y + hh], outline="#C4B5FD", width=max(2, base.width // 300))
+                    d.text((x + 4, y + 4), i.explanation.split(":")[0], fill="#C4B5FD")
         with c2:
             v1, v2 = st.columns(2)
-            v1.image(out.convert("RGB"), caption="Analysis view: overlays + flagged regions", width="stretch")
+            v1.image(out.convert("RGB"), caption="Analysis view: overlays + flagged regions (violet: model-listed artifacts)",
+                     width="stretch")
             v2.image(Image.open(cm) if show_cm else base.convert("RGB"),
                      caption="Copy-move pairs" if show_cm else "Original, as ingested", width="stretch")
     if ext in VIDEO:
@@ -353,9 +381,18 @@ elif screen == "Evidence":
         sel = st.selectbox("Play from a flagged span (0.5 s before)", ["start"] + [f'{i.location["start"]:.2f}s · {i.type}' for i in aflags])
         wav = case.artifact_path(f"{stem}_16k.wav")
         st.audio(str(wav if wav.exists() else path), start_time=0 if sel == "start" else int(max(0, float(sel.split("s")[0]) - 0.5)))
+    spec = case.artifact_path(f"{stem}_spectrum.png")
+    if ext in IMAGE and spec.exists():
+        with st.expander("Noise spectrum (spectral_upsampling)"):
+            st.image(str(spec), caption="Log power of the high-pass residual, centre = low frequencies. Bright isolated dots "
+                     "off the centre are periodic patterns; a dark outer ring is missing fine detail.", width=360)
     md("<h4>Findings in this file</h4>")
-    for i in mine:
-        card(i)
+    for g, what in GROUPS.items():
+        found = [i for i in mine if fusion.group(i) == g]
+        if found:
+            md(f'<div class="muted small" style="margin-top:8px"><b>{g}</b> · {what}</div>')
+            for i in found:
+                card(i)
     if not mine:
         md('<div class="panel muted">No indicators for this file. That does not show it is unaltered.</div>')
     claims = next((x for x in reversed(log) if x["action"] == "text_claims"), {})
@@ -417,12 +454,17 @@ elif screen == "Cross-media":
 
 # ---------- findings ----------
 elif screen == "Findings":
-    rows = [{"indicator": i.type, "medium": i.modality, "file": i.file, "location": where(i.location),
+    rows = [{"evidence type": fusion.group(i), "indicator": i.type, "medium": i.modality, "file": i.file, "location": where(i.location),
              "score": round(i.score, 2), "weight": round(fusion.weight(i), 2), "contribution": round(i.score * fusion.weight(i), 3),
+             "counted": "yes" if fusion.calibrated(i) else fusion.UNCALIBRATED,
              "reliability": i.reliability, "why": i.explanation, "could also be": "; ".join(i.alt_explanations),
              "artifact": Path(i.artifact).name if i.artifact else ""} for i in inds]
     if rows:
-        st.dataframe(sorted(rows, key=lambda r: -r["contribution"]), width="stretch", hide_index=True, height=440)
+        for g, what in GROUPS.items():
+            mine = sorted((r for r in rows if r["evidence type"] == g), key=lambda r: -r["contribution"])
+            if mine:
+                md(f"<h4>{g} <span class='muted small'>· {what}</span></h4>")
+                st.dataframe(mine, width="stretch", hide_index=True, height=min(440, 38 + 35 * len(mine)))
         files = sorted({i.file for i in inds if i.file != "context"})
         if files:
             c1, c2 = st.columns([3, 1])
@@ -475,8 +517,9 @@ elif screen == "Calibration":
     md('''<div class="panel small"><b>Limitations</b><ul>
 <li>The test set is small and team-made, so every rate has a wide interval: read the bars, not the dots.</li>
 <li>Platform recompression and resizing can both create and erase these indicators.</li>
-<li>Fully generated media with no local edits may show no indicators at all.</li>
-<li>No indicators does not mean unaltered. The language model only reads text and compares captions with pictures.</li></ul></div>''')
+<li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
+<li>No indicators does not mean unaltered. The language model reads text, compares captions with pictures and lists visible
+artifacts with their location; it is never asked whether media is real or generated.</li></ul></div>''')
 
 # ---------- custody ----------
 elif screen == "Custody":

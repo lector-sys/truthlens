@@ -14,11 +14,45 @@ def load_calibration(path=CALIBRATION):
 
 TYPE_WEIGHT = load_calibration().get("weights", {})
 
-LEVELS = [(0.75, "Strong indicators"), (0.45, "Moderate indicators"), (0.15, "Weak indicators"), (0.0, "No significant indicators")]
+OF = " of manipulation or synthetic generation"
+LEVELS = [(0.75, "Strong indicators" + OF), (0.45, "Moderate indicators" + OF), (0.15, "Weak indicators" + OF),
+          (0.0, "No significant indicators" + OF)]
+LIMITED = "Limited analysis: no significant indicators"
+GENERATED = {"synthetic_provenance", "synthetic_visual_artifacts", "spectral_upsampling"}
+CONTEXT = {"text_inconsistency", "caption_image_mismatch", "caption_frame_mismatch", "claim_date_mismatch",
+           "quote_not_in_transcript", "image_matches_frame"}
+
+
+def group(i):
+    """Evidence type of a finding: "Generated" (signs of synthetic origin), "Context" (caption/claims disagree with the
+    media), else "Edited" (signs of local edits, cuts or re-encoding)."""
+    return "Generated" if i.type in GENERATED else "Context" if i.type in CONTEXT else "Edited"
+
+
+def headline(assessment, coverage, file=None):
+    """Label to show: "Not analysed: <why>" when no analyzer ran, LIMITED when checks were skipped and nothing was
+    found, else the fused label. `file` = one evidence file instead of the whole case."""
+    cov = coverage["files"].get(file, {}) if file else coverage
+    if not cov.get("analysed", 1):
+        return "Not analysed: " + cov.get("why", "no analyzer ran")
+    lab = (assessment["files"].get(file) or {"label": LEVELS[-1][1]})["label"] if file else assessment["case"]["label"]
+    return LIMITED if lab == LEVELS[-1][1] and coverage["not_run"] else lab
+
+
+UNCALIBRATED = "uncalibrated (not counted in label)"
+
+
+def calibrated(i, weights=None):
+    """Does calibration have a weight for this type? With no calibration at all, everything uses reliability defaults."""
+    w = TYPE_WEIGHT if weights is None else weights
+    return not w or i.type in w
 
 
 def weight(i, weights=None):
-    return (TYPE_WEIGHT if weights is None else weights).get(i.type, RELIABILITY_WEIGHT[i.reliability])
+    """Calibrated weight; 0 for a type calibration has no data for (shown, not counted); reliability default only when
+    nothing is calibrated yet."""
+    w = TYPE_WEIGHT if weights is None else weights
+    return w.get(i.type, 0.0) if w else RELIABILITY_WEIGHT[i.reliability]
 
 
 def contributions(indicators, weights=None):
