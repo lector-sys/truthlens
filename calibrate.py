@@ -10,6 +10,7 @@ from truthlens.vault import Case
 from truthlens import pipeline, fusion, analyzers
 
 ROOT = Path(__file__).resolve().parent / "testset"
+HISTORY = Path(__file__).resolve().parent / "calibration" / "history"  # one dated copy per run
 POSITIVE = tuple(name for _, name in fusion.LEVELS[:2])  # Strong, Moderate
 FIRE = 0.25  # a type "fired" on a file when its strongest flag reaches this score; fainter flags are shown, not counted
 LABELS = ("real", "manipulated")  # TASKS.md §5 column values; shown as "untouched" / "manipulated"
@@ -183,6 +184,10 @@ def run(argv=()):
            "excluded_smoke_only": [r["file"] for r in skipped],
            "detectors": det, "weights": weights, "held_out": evaluate(held, weights)}
     fusion.CALIBRATION.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    hist = HISTORY / f"calibration_{datetime.datetime.now():%Y-%m-%d_%H%M%S}_{rec['git']}.json"
+    hist.parent.mkdir(parents=True, exist_ok=True)
+    hist.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    print(f"Copy kept in {hist.relative_to(ROOT.parent)} (commit both).")
     print("\n" + table(rec) + f"\n\nWrote {fusion.CALIBRATION.name}; fusion.py loads its weights automatically.")
     print(f"TYPE_WEIGHT = {weights}")
 

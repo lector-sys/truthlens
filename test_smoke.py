@@ -59,13 +59,22 @@ try:
     # fusion: monotonic, bounded, labelled
     assert fusion.combine([]) == 0 and fusion.label(0) == fusion.LEVELS[-1][1]
     strong = [Indicator("f.jpg", "image", t, 1.0, "high", "") for t in "xyz"]
-    assert 0.99 < fusion.combine(strong, {}) <= 1 and fusion.label(fusion.combine(strong, {})) == fusion.LEVELS[0][1]
+    full = {f"{t}/image": 0.9 for t in "xyz"}
+    assert 0.99 < fusion.combine(strong, full) <= 1 and fusion.label(fusion.combine(strong, full)) == fusion.LEVELS[0][1]
+    assert fusion.combine(strong, {}) == 0  # nothing calibrated: every weight 0, no silent reliability fallback
     weak = Indicator("f", "video", "ela_hotspot", 0.3, "low", "")
     assert fusion.combine([weak] * 60) == fusion.combine([weak])  # repeated frames don't saturate
     # once anything is calibrated, a type without calibration data weighs 0: shown, marked, not counted in the label
     w = {"x/image": 0.5, "y/video": 0.9}  # y has data only for video: on an image it weighs 0
     assert [fusion.weight(i, w) for i in strong] == [0.5, 0.0, 0.0] and fusion.combine(strong, w) == 0.5
-    assert [fusion.calibrated(i, w) for i in strong] == [True, False, False] and fusion.calibrated(strong[1], {})
+    assert [fusion.calibrated(i, w) for i in strong] == [True, False, False] and not fusion.calibrated(strong[1], {})
+    saved = fusion.TYPE_WEIGHT
+    fusion.TYPE_WEIGHT = {}  # calibration.json missing: red banner in the report (the dashboard shows the same text)
+    try:
+        assert fusion.missing() and fusion.MISSING in report.render(case, res)
+    finally:
+        fusion.TYPE_WEIGHT = saved
+    assert not fusion.missing() and fusion.MISSING not in report.render(case, res)
 
     # cross-modal: aligned A/V flags link, distant ones don't
     v = Indicator("v.mp4", "video", "temporal", 0.6, "low", "", location={"t": 12.0})

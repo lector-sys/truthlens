@@ -1,11 +1,10 @@
 """OWNER D. Rule-based fusion. Weights per (indicator type, media of the evidence file) come from calibration.json
-(written by `python calibrate.py`); a pair it has no data for weighs 0. Only with no calibration at all do detectors
-fall back to their general reliability."""
+(written by `python calibrate.py`, committed); a pair it has no data for weighs 0. With no calibration loaded every
+weight is 0 and the dashboard and report show MISSING in red: no silent fallback."""
 import json
 from pathlib import Path
-from .indicator import RELIABILITY_WEIGHT
-
 CALIBRATION = Path(__file__).resolve().parent.parent / "calibration.json"
+MISSING = "No calibration loaded — all weights are 0, labels are not meaningful. Run calibrate.py."
 
 
 def load_calibration(path=CALIBRATION):
@@ -57,17 +56,20 @@ def key(i):
     return f"{i.type}/{media(i.file)}"
 
 
+def missing():
+    """True when no calibration weights are loaded: every weight is then 0 and labels mean nothing."""
+    return not TYPE_WEIGHT
+
+
 def calibrated(i, weights=None):
-    """Does calibration have a weight for this (type, media) pair? With no calibration at all, reliability defaults."""
-    w = TYPE_WEIGHT if weights is None else weights
-    return not w or key(i) in w
+    """Does calibration have a weight for this (type, media) pair?"""
+    return key(i) in (TYPE_WEIGHT if weights is None else weights)
 
 
 def weight(i, weights=None):
-    """Calibrated weight of the (type, media) pair; 0 for a pair calibration has no data for (shown, not counted);
-    reliability default only when nothing is calibrated yet."""
-    w = TYPE_WEIGHT if weights is None else weights
-    return w.get(key(i), 0.0) if w else RELIABILITY_WEIGHT[i.reliability]
+    """Calibrated weight of the (type, media) pair; 0 for a pair without data, and for everything when nothing is
+    calibrated (MISSING is shown then)."""
+    return (TYPE_WEIGHT if weights is None else weights).get(key(i), 0.0)
 
 
 def contributions(indicators, weights=None):

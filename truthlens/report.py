@@ -18,6 +18,7 @@ TEMPLATE = Template("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>T
 table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}</style>
 </head><body>
 <h1>TruthLens forensic report: {{ case.id }}</h1>
+{% if missing %}<p style="background:#F97352;color:#000;padding:8px;font-weight:bold">{{ missing }}</p>{% endif %}
 {% if headline.startswith('Not analysed') %}<p style="color:#64748B"><b>Overall: {{ headline }}.</b> No analyzer ran, so no label is given.</p>
 {% else %}<p><b>Overall:</b> {{ headline }} (indicator strength {{ '%.2f' % a.case.p }}).</p>{% endif %}
 {% if coverage_line %}<p style="color:#64748B">{{ coverage_line }}</p>{% endif %}
@@ -128,7 +129,7 @@ def render(case, result):
     checks = human_checks(inds)
     cal = fusion.load_calibration()
     calib = (f"{cal['dataset']} test set, n={cal['n']}, held-out n={cal['n_held_out']}, {cal['date']}, git {cal['git']}"
-             if cal else "uncalibrated reliability defaults")
+             if cal else "none loaded (all weights 0)")
     calls = [e for e in log if e["action"] == "llm_call" and e["check"] != "transcribe"]
     skipped = sorted({e["check"] for e in log if e["action"] == "check_not_run"})
     semantic = ", ".join(sorted({f"{e['model']}, prompt {e.get('prompt_version', '?')}" for e in calls})) or "none run"
@@ -140,7 +141,7 @@ def render(case, result):
     groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
               "Context": "the caption or claims disagree with the media"}
     group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
-    return TEMPLATE.render(recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), coverage_line=pipeline.coverage_line(cov), groups=groups,
+    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
                            calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],

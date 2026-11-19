@@ -26,6 +26,8 @@ HIDDEN = ("smoke_test", "calib_", "probe_")
 e = html.escape
 
 st.set_page_config("TruthLens", "🔎", layout="wide")
+if fusion.missing():
+    st.error(fusion.MISSING, icon="⛔")
 st.markdown("""<style>
 :root{--bg:#0A0E13;--panel:#10161D;--raised:#161E27;--line:#1F2A36;--text:#E6EDF3;--muted:#8B98A5;--accent:#38BDF8}
 html,body,[class*="css"]{font-family:Inter,"Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums}
@@ -98,7 +100,7 @@ def card(i):
 
 def dataset_badge(cal):
     if not cal:
-        return '<span class="badge" style="background:#1F2A36;color:#8B98A5">UNCALIBRATED · reliability defaults</span>'
+        return '<span class="badge" style="background:#F97352;color:#0A0E13">NO CALIBRATION · all weights 0</span>'
     measured = cal["dataset"] == "REAL"
     col = "#38BDF8" if measured else "#F2B544"
     held = f" · held-out n={cal['n_held_out']}" if measured else ""
@@ -282,7 +284,7 @@ if screen == "Overview":
                f'split this setup flagged</span> {pct(h["hit_rate"])} <span class="muted">of manipulated files and</span> '
                f'{pct(h["false_alarm_rate"])} <span class="muted">of untouched ones (95% intervals).</span></div>')
         else:
-            md('<div class="panel small muted">Not calibrated yet: weights are reliability defaults. '
+            md('<div class="panel small" style="border-color:#F97352">No calibration loaded: every weight is 0. '
                'Run <code>python calibrate.py</code> on the labelled test set.</div>')
     with c2:
         contrib = [kv for kv in sorted(fusion.contributions(inds).items(), key=lambda kv: -kv[1])[:3] if kv[1] > 0]
@@ -529,8 +531,8 @@ elif screen == "Findings":
 # ---------- calibration ----------
 elif screen == "Calibration":
     if not cal:
-        md('<div class="panel muted">No calibration yet. Run <code>python calibrate.py</code> on the labelled test set; '
-           "until then fusion uses each detector's general reliability.</div>")
+        md('<div class="panel" style="border-color:#F97352">No calibration loaded. Run <code>python calibrate.py</code> '
+           "on the labelled test set; until then every weight is 0 and labels are not meaningful.</div>")
     else:
         md(f'<div style="font-size:1.3rem">{dataset_badge(cal)}</div><div class="muted small mono">{e(cal["date"])} · git {e(cal["git"])} · '
            f'fitted on n={cal["n_calibration"]}, evaluated on held-out n={cal["n_held_out"]}</div>')
