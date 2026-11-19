@@ -58,6 +58,34 @@ def copy_move(date):
     return jpeg(a, q=95, ex=exif(date))
 
 
+XMP = (b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+       b'<rdf:Description xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" Iptc4xmpExt:DigitalSourceType='
+       b'"http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"/></rdf:RDF></x:xmpmeta>')
+
+
+def jpeg_xmp(arr):
+    """JPEG carrying an XMP packet that declares DigitalSourceType = trainedAlgorithmicMedia (as generators write it)."""
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, "JPEG", quality=92, xmp=XMP)
+    return buf.getvalue()
+
+
+def png_params(arr, text="Steps: 30, Sampler: DPM++ 2M, Model: stable diffusion xl"):
+    """PNG, optionally with an A1111-style 'parameters' text chunk naming the generator."""
+    from PIL import PngImagePlugin
+    info = PngImagePlugin.PngInfo()
+    if text:
+        info.add_text("parameters", text)
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, "PNG", pnginfo=info)
+    return buf.getvalue()
+
+
+def upsampled():
+    """Scene rendered at half size and bicubic-upsampled 2x: no metadata, only the spectral trace."""
+    return np.asarray(Image.fromarray(scene(w=320, h=240)).resize((640, 480), Image.BICUBIC))
+
+
 def speech(sec=8.0, floor_db=-50.0, f0=150.0):
     """Syllable-like harmonic bursts with pauses over a constant noise floor."""
     t = np.arange(int(sec * SR)) / SR
@@ -116,13 +144,14 @@ def main():
     MEDIA.mkdir(exist_ok=True)
     rows = []
 
-    def add(name, data, label, manip, context, case="", owner="placeholder"):
+    def add(name, data, label, manip, context, case="", owner="placeholder", generator=""):
         p = MEDIA / name
         if callable(data):
             data(p)
         else:
             p.write_bytes(data)
-        rows.append({"file": name, "label": label, "manipulation": manip, "case": case, "context": context, "owner": owner})
+        rows.append({"file": name, "label": label, "manipulation": manip, "case": case, "context": context, "owner": owner,
+                     "generator": generator})
 
     D, LIB = "2026-11-02", "Photo of the campus library, taken {}"
     for i in range(1, 7):
@@ -155,11 +184,21 @@ def main():
     for i in range(1, 3):
         add(f"ph_vid_wrongdate_{i:02d}.mp4", lambda p: video(p, speech(), "2026-10-01"), "manipulated", "wrong_date", Q)
 
+    # ai_generated stand-ins, after everything else so the files above stay byte-identical (same rng sequence).
+    # They only exercise the plumbing: XMP DigitalSourceType tag, a generator name in a PNG text chunk, 2x upsampling.
+    for i in range(1, 3):
+        add(f"ph_img_ai_xmp_{i:02d}.jpg", jpeg_xmp(scene()), "manipulated", "ai_generated", LIB.format(D), generator="ph-xmp")
+    for i in range(1, 3):
+        add(f"ph_img_ai_param_{i:02d}.png", png_params(scene()), "manipulated", "ai_generated", LIB.format(D), generator="ph-sd")
+    for i in range(1, 3):
+        add(f"ph_img_ai_up_{i:02d}.png", png_params(upsampled(), text=None), "manipulated", "ai_generated", LIB.format(D),
+            generator="ph-upsample")
+
     labels = ROOT / "labels.csv"
     with open(labels, encoding="utf-8") as f:
         keep = [r for r in csv.DictReader(f) if not r["file"].startswith("ph_")]
     with open(labels, "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, ["file", "label", "manipulation", "case", "context", "owner"])
+        w = csv.DictWriter(f, ["file", "label", "manipulation", "case", "context", "owner", "generator"], restval="")
         w.writeheader()
         w.writerows(keep + rows)
     print(f"wrote {len(rows)} placeholder files to {MEDIA}")

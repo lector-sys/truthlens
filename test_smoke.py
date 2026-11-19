@@ -57,11 +57,15 @@ try:
     assert pipeline.load(case)["indicators"] == res["indicators"]  # saved result round-trips for the dashboard
 
     # fusion: monotonic, bounded, labelled
-    assert fusion.combine([]) == 0 and fusion.label(0) == "No significant indicators"
+    assert fusion.combine([]) == 0 and fusion.label(0) == fusion.LEVELS[-1][1]
     strong = [Indicator("f", "image", t, 1.0, "high", "") for t in "xyz"]
-    assert 0.99 < fusion.combine(strong) <= 1 and fusion.label(fusion.combine(strong)) == "Strong indicators"
+    assert 0.99 < fusion.combine(strong, {}) <= 1 and fusion.label(fusion.combine(strong, {})) == fusion.LEVELS[0][1]
     weak = Indicator("f", "video", "ela_hotspot", 0.3, "low", "")
     assert fusion.combine([weak] * 60) == fusion.combine([weak])  # repeated frames don't saturate
+    # once anything is calibrated, a type without calibration data weighs 0: shown, marked, not counted in the label
+    w = {"x": 0.5}
+    assert [fusion.weight(i, w) for i in strong] == [0.5, 0.0, 0.0] and fusion.combine(strong, w) == 0.5
+    assert [fusion.calibrated(i, w) for i in strong] == [True, False, False] and fusion.calibrated(strong[1], {})
 
     # cross-modal: aligned A/V flags link, distant ones don't
     v = Indicator("v.mp4", "video", "temporal", 0.6, "low", "", location={"t": 12.0})
@@ -163,6 +167,25 @@ try:
         assert any(e["action"] == "llm_call" and e.get("input_tokens") == 9 for e in case.entries())
     finally:
         llm.PROVIDERS, llm._clients = [], {}
+
+    # generated: provenance metadata (fake XMP DigitalSourceType tag); spectral trace of 2x upsampling vs a native scene
+    case.ingest("gen_xmp.jpg", ph.jpeg_xmp(ph.scene()))
+    pv = image.synthetic_provenance(case.dir / "evidence" / "gen_xmp.jpg", case)
+    assert [(i.type, i.score) for i in pv] == [("synthetic_provenance", 0.9)] and pv[0].alt_explanations, pv
+    assert image.synthetic_provenance(case.dir / "evidence" / "spliced.jpg", case) == []
+    up = Image.fromarray(ph.scene(w=320, h=240)).resize((640, 480), Image.BICUBIC)
+    sp = image.spectral_upsampling(Path("up.png"), up, case)
+    assert [i.type for i in sp] == ["spectral_upsampling"] and sp[0].score > 0.5 and Path(sp[0].artifact).exists(), sp
+    assert image.spectral_upsampling(Path("native.png"), Image.fromarray(ph.scene()), case) == []
+    # coverage: nothing analysed -> no label; analysed but checks skipped and nothing found -> "Limited analysis"
+    nc = Case("smoke_coverage")
+    try:
+        nc.ingest("notes.xyz", b"not media")
+        r = pipeline.run(nc, "")
+        assert r["headline"] == "Not analysed: notes.xyz: unsupported type (.xyz)" and r["coverage"]["analysed"] == 0, r["headline"]
+        assert fusion.headline(fusion.assess([]), {**r["coverage"], "analysed": 1}) == fusion.LIMITED
+    finally:
+        nc.delete()
 
     # whisper: the request carries the audio and fixed options only, never caption / claim / quote text
     sent, urlopen = [], llm.urllib.request.urlopen

@@ -5,16 +5,18 @@ Rows whose file starts with ph_ are synthetic placeholders: refused unless --all
 import csv, datetime, json, math, random, subprocess, sys
 from collections import Counter
 from pathlib import Path
+from PIL import Image
 from truthlens.vault import Case
 from truthlens import pipeline, fusion, analyzers
 
 ROOT = Path(__file__).resolve().parent / "testset"
-POSITIVE = ("Moderate indicators", "Strong indicators")
+POSITIVE = tuple(name for _, name in fusion.LEVELS[:2])  # Strong, Moderate
 FIRE = 0.25  # a type "fired" on a file when its strongest flag reaches this score; fainter flags are shown, not counted
 LABELS = ("real", "manipulated")  # TASKS.md §5 column values; shown as "untouched" / "manipulated"
 MANIPULATIONS = {"none", "splice", "copy_move", "ai_generated", "video_cut", "voice_clone", "audio_splice",
                  "wrong_caption", "wrong_date", "wrong_quote"}
 CASES = {"", "demo1", "demo2", "demo3"}
+IMAGES = (".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif", ".avif", ".heic", ".heif", ".jxl", ".jp2")
 
 
 def media_of(name):
@@ -36,6 +38,8 @@ def check(rows, media_dir=ROOT / "media"):
             probs.append(f"line {n}: manipulation '{r['manipulation']}' invalid for label '{r['label']}'")
         if r.get("case", "") not in CASES:
             probs.append(f"line {n}: case '{r['case']}' not in {sorted(CASES)}")
+        if r["manipulation"] == "ai_generated" and not r.get("generator", "").strip():
+            probs.append(f"line {n}: ai_generated row needs the generator name in the 'generator' column")
     return probs
 
 
@@ -125,6 +129,17 @@ def run(argv=()):
     for (m, l), c in sorted(counts.items()):
         if c < 15:
             print(f"warning: only {c} {m} {'untouched' if l == 'real' else l} files (goal >= 15)")
+    ai = [r for r in rows if r["manipulation"] == "ai_generated"]
+    gens = {r.get("generator", "").strip().lower() for r in ai} - {""}
+    if len(ai) < 15 or len(gens) < 3:
+        print(f"warning: {len(ai)} ai_generated files from {len(gens)} generator(s) (goal >= 15 from >= 3 generators)")
+    for r in ai:
+        try:
+            with Image.open(ROOT / "media" / r["file"]) as im:
+                if max(im.size) < 768:
+                    print(f"warning: {r['file']} is {im.size[0]}x{im.size[1]}: looks like a thumbnail, use the original download")
+        except OSError:
+            pass  # missing (reported above) or HEIC etc. (the pipeline converts it; size not checked here)
 
     results = []
     for i, row in enumerate(rows):
