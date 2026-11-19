@@ -1,6 +1,6 @@
 import json
 from . import analyzers, crossmodal, fusion, llm, report
-from .analyzers import text as text_analyzer, IMAGE_EXTS
+from .analyzers import text as text_analyzer, IMAGE_EXTS, TEXT_EXTS
 from .indicator import Indicator
 
 
@@ -30,7 +30,7 @@ def run(case, context_text="", progress=lambda step, state: None):
         indicators += text_analyzer.analyze(context_text, case)
         progress("text · context", "done")
     progress("cross-media checks", "running")
-    indicators += crossmodal.analyze(indicators, context_text, case)
+    indicators += crossmodal.analyze(indicators, all_text(case, context_text), case)
     progress("cross-media checks", "done")
     result = {"indicators": indicators, "assessment": fusion.assess(indicators), "integrity": case.verify(),
               "context": context_text}
@@ -59,6 +59,13 @@ def load(case):
             "headline": fusion.headline(a, cov)}
 
 
+def all_text(case, context_text=""):
+    """The caption plus every text evidence file, each labelled: what the cross-media checks compare against the media."""
+    parts = [context_text.strip()] + [f"[{p.name}]\n" + p.read_text(encoding="utf-8", errors="replace").strip()
+                                      for p in case.evidence() if p.suffix.lower() in TEXT_EXTS]
+    return "\n\n".join(x for x in parts if x)
+
+
 SEMANTIC = {"claims": "claims from the caption", "caption_consistency": "caption ↔ image / frames",
             "synthetic_visual_artifacts": "visual artifacts (model)", "transcribe": "transcript"}
 
@@ -67,6 +74,7 @@ def coverage(case, context_text=""):
     """Which checks ran, from the case log: {"ran": [...], "not_run": {check: why}, "total", "analysed",
     "files": {file: {"analysed": n, "why"}}}. A check counts as run only if it produced a result (even "nothing found")."""
     log, ev = case.entries(), case.evidence()
+    context_text = all_text(case, context_text)  # text evidence files count as claims to check, like a caption
     kinds = {k for p in ev for m in analyzers.BY_EXT.get(p.suffix.lower(), ()) for k in [m.__name__.rsplit(".", 1)[1]]}
     calls = {e["check"] for e in log if e["action"] == "llm_call"}
     skipped = {}

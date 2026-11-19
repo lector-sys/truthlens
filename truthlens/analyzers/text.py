@@ -1,6 +1,7 @@
-"""OWNER C. Context text analysis: claim extraction via Luna (regex fallback offline).
-Keep AI-text detection low weight. Emit location={"span": "..."}."""
+"""OWNER C. Text analysis: claim extraction (regex fallback offline) from the caption that came with the media and from
+text evidence files (.txt / .md). No AI-authorship detection (out of scope, TASKS.md). Emit location={"span": "..."}."""
 import re
+from pathlib import Path
 from .. import llm
 from ..indicator import Indicator
 
@@ -30,8 +31,12 @@ def extract_claims(text, case=None):
 
 
 def analyze(text, case):
+    """`text`: the caption string, or the Path of a text evidence file (its claims are attributed to that file)."""
+    source = "context"
+    if isinstance(text, Path):
+        source, text = text.name, text.read_text(encoding="utf-8", errors="replace")
     claims = extract_claims(text, case)
-    case.log("text_claims", model=llm.MODEL if llm.client() else "regex", **claims)
-    return [Indicator("context", "text", "text_inconsistency", 0.4, "low", c["reason"], location={"span": c["span"]},
+    case.log("text_claims", source=source, model=llm.MODEL if llm.client() else "regex", **claims)
+    return [Indicator(source, "text", "text_inconsistency", 0.4, "low", c["reason"], location={"span": c["span"]},
                       alt_explanations=["Ambiguous wording", "Model misreading"])
             for c in claims.get("inconsistencies", [])]
