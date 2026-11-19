@@ -215,6 +215,23 @@ try:
             assert r["headline"] == fusion.headline(r["assessment"], r["coverage"])  # label not touched by the banner
         finally:
             cc.delete()
+        # same banner for audio: a signed WAV gets synthetic_provenance as an audio finding, weight 0 (uncalibrated)
+        wsrc, wsig = case.artifact_path("c2pa_in.wav"), case.artifact_path("c2pa_signed.wav")
+        with wave.open(str(wsrc), "wb") as w:
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+            w.writeframes((np.sin(np.arange(16000) * 0.17) * 8000).astype("<i2").tobytes())
+        if subprocess.run([exe, str(wsrc), "-m", str(man), "-o", str(wsig), "-f"], capture_output=True).returncode == 0:
+            ac = Case("smoke_c2pa_audio")
+            try:
+                ac.ingest("signed.wav", wsig.read_bytes())
+                r = pipeline.run(ac, "")
+                pv = [i for i in r["indicators"] if i.type == "synthetic_provenance"]
+                assert [(i.modality, fusion.weight(i)) for i in pv] == [("audio", 0)], pv
+                banner = report.content_credentials(ac, r["indicators"])
+                assert len(banner) == 1 and banner[0].startswith("Provenance (signed.wav): this file's signed Content "
+                                                                 "Credentials declare it AI-generated"), banner
+            finally:
+                ac.delete()
         d = bytearray(signed.read_bytes())
         d[-5000] ^= 0xFF
         signed.write_bytes(bytes(d))

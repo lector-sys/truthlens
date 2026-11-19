@@ -1,7 +1,9 @@
-import json
+import dataclasses, json
 from . import analyzers, crossmodal, fusion, llm, report
-from .analyzers import text as text_analyzer, IMAGE_EXTS, TEXT_EXTS
+from .analyzers import text as text_analyzer, image, IMAGE_EXTS, TEXT_EXTS
 from .indicator import Indicator
+
+C2PA_AUDIO = (".wav", ".mp3", ".m4a", ".flac")  # audio c2patool 0.27 signs (not .ogg)
 
 
 def run(case, context_text="", progress=lambda step, state: None):
@@ -25,6 +27,11 @@ def run(case, context_text="", progress=lambda step, state: None):
             case.log("analyzed", file=path.name, analyzer=mod.__name__, n=len(found))
             progress(step, "done")
             indicators += found
+        if path.suffix.lower() in C2PA_AUDIO:  # Content Credentials in audio: display only, the audio pair has no weight
+            try:
+                indicators += [dataclasses.replace(i, modality="audio") for i in image.synthetic_provenance(path, case)]
+            except Exception as e:
+                case.log("analyzer_error", file=path.name, analyzer="provenance", error=repr(e))
     if context_text:
         progress("text · context", "running")
         indicators += text_analyzer.analyze(context_text, case)
