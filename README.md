@@ -64,9 +64,11 @@ fusion and the dashboard load. Synthetic `ph_*` placeholder rows (`python testse
 `--allow-placeholder`, and are then stamped SYNTHETIC everywhere.
 
 ## Screens
-| Overview | Cross-media | Evidence |
-|---|---|---|
-| ![](docs/screenshots/demo2_Overview_1440x900.png) | ![](docs/screenshots/demo2_Cross-media_1440x900.png) | ![](docs/screenshots/demo1_Evidence_1440x900.png) |
+Upload → Analyzing → Results, themed as an evidence light table.
 
-More in `docs/screenshots/`. Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
+| Results | Analyzing | Custody |
+|---|---|---|
+| ![](docs/screenshots/v2/results_demo2_1280x720.png) | ![](docs/screenshots/v2/flow_1280x720_analyzing.png) | ![](docs/screenshots/v2/tab_Custody_demo2_1280x720.png) |
+
+More in `docs/screenshots/v2/` (1280×720 and 1920×1080). Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
 team brief: [TASKS.md](TASKS.md) · rules: [AGENTS.md](AGENTS.md) · state + open items: [NOTES_STATE.md](NOTES_STATE.md)

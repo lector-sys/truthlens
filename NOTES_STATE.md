@@ -143,6 +143,25 @@
   0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
 - Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
 
+## Dashboard v2: "Evidence Light Table" (2026-11-19)
+- One flow **Upload -> Analyzing -> Results**. Analysis runs in a worker thread; the progress box is a 0.5 s fragment
+  (queued / running / done / failed / not run, per-step times, elapsed, watchdog message). Pipeline emits every step as
+  "queued" first and a "summary" step (display only).
+- Results: provenance banner, label hero (gauge, "Mostly from: <group> — <finding> at <where>", how-sure line), friendly
+  coverage line + next-step hints, top 3 evidence tags with **Show me** (opens Evidence focused on that region / frame /
+  audio time), human checks, summary, Export report. Tabs (remembered per case): Evidence · Cross-media · All findings
+  (filter chips; uncalibrated + not-run folded away) · Custody (stamp) · Calibration. Sidebar: GPU pill, New case, case
+  list with thumbnails + label pills (failed = grey), glossary.
+- Tags `E-01…` in finding order (`report.tagged`: contribution, then score), the same in dashboard and report.
+  `fusion.contribution(i)` is the per-finding value `contributions()` already used (refactor, same numbers).
+- Theme: `ui/theme.css` (one file), `.streamlit/config.toml` (colours, `theme.fontFaces`, static serving). Fonts bundled
+  in `static/fonts/` (Inter, Space Grotesk, JetBrains Mono; variable woff2, Latin subset, from Fontsource; SIL OFL 1.1,
+  licences alongside). The HTML report embeds the same fonts and has a light, print-friendly theme.
+- Panels that hit an unexpected error show a friendly note + Details; the traceback goes to the dashboard log.
+- Verified: `pipeline.load()` of all 20 existing cases and their result.json bytes identical before/after; demo1-3
+  re-run identical (indicators, scores, labels, coverage, summary). Screenshots: `docs/screenshots/v2/` at 1280×720 and
+  1920×1080, no horizontal scroll at either size.
+
 ## First real uploads: hangs and false alarms fixed (2026-11-19, cad7330)
 - **Hang**: `1.m4a.mp4` / `5.m4a.mp4` (iPhone voice memos, audio-only MP4) went to the video analyzer by extension;
   OpenCV's `cap.read()` spun forever (4 cores busy). Now `pipeline.route` reads streams with ffprobe (logged
@@ -175,7 +194,7 @@
 ## Module map
 | File | Role |
 |---|---|
-| `app.py` | Streamlit review UI (`streamlit run app.py`, or `python demo.py`) |
+| `app.py` | Streamlit review UI (`streamlit run app.py`, or `python demo.py`); theme in `ui/theme.css`, fonts in `static/fonts/` |
 | `truthlens/vault.py` | `Case`: SHA-256 on ingest, read-only evidence, artifacts dir, append-only `log.jsonl` |
 | `truthlens/pipeline.py` | evidence → analyzers by extension → text claims → crossmodal → fusion |
 | `truthlens/analyzers/{image,video,audio,text}.py` | per-medium detectors, each `analyze(path, case) -> list[Indicator]` |
@@ -222,3 +241,4 @@ B and C must `git pull origin main` before more work. No force-pushes.
 | Smoke grep bans "real" | Brief also wants a `REAL` dataset badge | Grep is case-sensitive: lowercase/Title-case banned, all-caps dataset tag allowed |
 | `scene_cuts(path)` | TASKS A6 signature | `scene_cuts(path, case)`, so a scenedetect failure is logged instead of crashing the video analyzer |
 | Playwright screenshots | §4.3 | Headless Edge via DevTools protocol (scratch script, not in repo); 12 PNGs in `docs/screenshots/` reviewed and fixed |
+| Dashboard v2 brief: bundled Inter / Space Grotesk / JetBrains Mono, `ui/theme.css` | §4.3 (earlier read as ruling out bundled fonts), §4.2 new files | Built as asked by the lead: fonts are static OFL assets, not Python dependencies (§4.3 lists packages and HTTP APIs); new files `ui/theme.css`, `static/fonts/*` |
