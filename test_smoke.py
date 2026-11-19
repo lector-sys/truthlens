@@ -58,12 +58,12 @@ try:
 
     # fusion: monotonic, bounded, labelled
     assert fusion.combine([]) == 0 and fusion.label(0) == fusion.LEVELS[-1][1]
-    strong = [Indicator("f", "image", t, 1.0, "high", "") for t in "xyz"]
+    strong = [Indicator("f.jpg", "image", t, 1.0, "high", "") for t in "xyz"]
     assert 0.99 < fusion.combine(strong, {}) <= 1 and fusion.label(fusion.combine(strong, {})) == fusion.LEVELS[0][1]
     weak = Indicator("f", "video", "ela_hotspot", 0.3, "low", "")
     assert fusion.combine([weak] * 60) == fusion.combine([weak])  # repeated frames don't saturate
     # once anything is calibrated, a type without calibration data weighs 0: shown, marked, not counted in the label
-    w = {"x": 0.5}
+    w = {"x/image": 0.5, "y/video": 0.9}  # y has data only for video: on an image it weighs 0
     assert [fusion.weight(i, w) for i in strong] == [0.5, 0.0, 0.0] and fusion.combine(strong, w) == 0.5
     assert [fusion.calibrated(i, w) for i in strong] == [True, False, False] and fusion.calibrated(strong[1], {})
 
@@ -74,19 +74,22 @@ try:
     assert len(crossmodal.link_timestamps([v, a, far])) == 1
     # calibration: per-type counts + Wilson CI + weights, case-level confusion, stratified split, label validation
     def ind(t, s=1.0):
-        return Indicator("f", "image", t, s, "high", "")
+        return Indicator("f.jpg", "image", t, s, "high", "")
     rs = [{"label": "manipulated", "media": "image", "indicators": [ind("ela_hotspot"), ind("copy_move")]},
           {"label": "manipulated", "media": "image", "indicators": [ind("ela_hotspot", 0.1)]},
           {"label": "real", "media": "image", "indicators": [ind("ela_hotspot", 0.6)]}]
     det = calibrate.fit(rs)
-    assert (det["ela_hotspot"]["hits"], det["ela_hotspot"]["false_alarms"], det["ela_hotspot"]["weight"]) == (1, 1, 0.0)  # 0.1 < FIRE: not counted
-    assert det["copy_move"]["weight"] == 0.3 and det["copy_move"]["precision"][0] == 1.0
+    assert (det["ela_hotspot/image"]["hits"], det["ela_hotspot/image"]["false_alarms"], det["ela_hotspot/image"]["weight"]) == (1, 1, 0.0)  # 0.1 < FIRE: not counted
+    assert det["copy_move/image"]["weight"] == 0.3 and det["copy_move/image"]["precision"][0] == 1.0
+    # per media: firing on video rows can't change the image weight of the same type
+    vid = [{"label": "real", "media": "video", "indicators": [ind("copy_move")]}] * 3
+    assert calibrate.fit(rs + vid)["copy_move/image"] == det["copy_move/image"] and "copy_move/video" in calibrate.fit(rs + vid)
     keep, skip = calibrate.smoke_only([{"file": "ph_vid_ai_late_01.mp4"}, {"file": "ph_aud_clone_01.wav"},
                                        {"file": "ph_vid_face_real_02.mp4"}, {"file": "ph_img_real_01.jpg"}])
     assert [r["file"] for r in keep] == ["ph_img_real_01.jpg"] and len(skip) == 3
     p, lo, hi = calibrate.wilson(15, 15)
     assert p == 1 and 0.79 < lo < 0.80 and hi == 1  # "100%" of 15 is really 80-100%
-    ev = calibrate.evaluate(rs, {"ela_hotspot": 0.9, "copy_move": 0.9})
+    ev = calibrate.evaluate(rs, {"ela_hotspot/image": 0.9, "copy_move/image": 0.9})
     assert (ev["tp"], ev["fn"], ev["fp"], ev["tn"]) == (1, 1, 1, 0), ev
     cal, held = calibrate.split([{"media": m, "label": l, "i": k} for k in range(10) for m in ("image", "audio")
                                  for l in ("real", "manipulated")])

@@ -86,17 +86,20 @@ def split(results, frac=0.6, seed=0):
 
 
 def fit(results):
-    """Per indicator type on these results: hits, false alarms, precision with CI, weight."""
-    n = Counter(r["label"] for r in results)
-    fired = {lab: Counter(t for r in results if r["label"] == lab for t in {i.type for i in r["indicators"] if i.score >= FIRE})
-             for lab in LABELS}
+    """Per (indicator type, media) pair, counted only on rows of that media: hits, false alarms, precision with CI,
+    weight. Keys "type/media" match fusion.key(), so e.g. synthetic video rows can't lower an image detector's weight."""
     out = {}
-    for t in sorted(set(fired["manipulated"]) | set(fired["real"])):
-        m, f = fired["manipulated"][t], fired["real"][t]
-        out[t] = {"hits": m, "false_alarms": f, "n_manipulated": n["manipulated"], "n_untouched": n["real"],
-                  "precision": wilson(m, m + f), "hit_rate": wilson(m, n["manipulated"]),
-                  "weight": weight(m, f, n["manipulated"], n["real"])}
-    return out
+    for med in sorted({r["media"] for r in results}):
+        rows = [r for r in results if r["media"] == med]
+        n = Counter(r["label"] for r in rows)
+        fired = {lab: Counter(t for r in rows if r["label"] == lab for t in {i.type for i in r["indicators"] if i.score >= FIRE})
+                 for lab in LABELS}
+        for t in sorted(set(fired["manipulated"]) | set(fired["real"])):
+            m, f = fired["manipulated"][t], fired["real"][t]
+            out[f"{t}/{med}"] = {"hits": m, "false_alarms": f, "n_manipulated": n["manipulated"], "n_untouched": n["real"],
+                                 "precision": wilson(m, m + f), "hit_rate": wilson(m, n["manipulated"]),
+                                 "weight": weight(m, f, n["manipulated"], n["real"])}
+    return dict(sorted(out.items()))
 
 
 def evaluate(results, weights):
@@ -117,7 +120,7 @@ def table(rec):
     s, h = rec["detectors"], rec["held_out"]
     lines = [f"**{rec['dataset']}** test set, n={rec['n']}, calibration split n={rec['n_calibration']}, "
              f"held-out n={rec['n_held_out']}, {rec['date']}, git {rec['git']}\n",
-             "| Indicator | Fired on manipulated | Fired on untouched | Precision (95% CI) | Weight |", "|---|---|---|---|---|"]
+             "| Indicator / media | Fired on manipulated | Fired on untouched | Precision (95% CI) | Weight |", "|---|---|---|---|---|"]
     for t, d in s.items():
         lines.append(f"| {t} | {d['hits']}/{d['n_manipulated']} | {d['false_alarms']}/{d['n_untouched']} | "
                      f"{pct(d['precision'])} | {d['weight']} |")

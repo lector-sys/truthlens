@@ -1,5 +1,6 @@
-"""OWNER D. Rule-based fusion. Per-type weights come from calibration.json (written by `python calibrate.py`);
-types it hasn't measured fall back to the detector's general reliability."""
+"""OWNER D. Rule-based fusion. Weights per (indicator type, media of the evidence file) come from calibration.json
+(written by `python calibrate.py`); a pair it has no data for weighs 0. Only with no calibration at all do detectors
+fall back to their general reliability."""
 import json
 from pathlib import Path
 from .indicator import RELIABILITY_WEIGHT
@@ -43,17 +44,30 @@ def headline(assessment, coverage, file=None):
 UNCALIBRATED = "uncalibrated (not counted in label)"
 
 
+def media(file):
+    """Media of an evidence file by extension: "image" | "video" | "audio" | "text" ("context" and unknown -> "text")."""
+    from .analyzers import BY_EXT  # here: analyzers import much more than fusion needs at import time
+    mods = BY_EXT.get(Path(file).suffix.lower())
+    return mods[0].__name__.rsplit(".", 1)[1] if mods else "text"
+
+
+def key(i):
+    """Calibration key: indicator type + media of its evidence file, e.g. "noise_inconsistency/video" (an audio flag in
+    an .mp4 is "/video"), so rows of one media never move another media's weight."""
+    return f"{i.type}/{media(i.file)}"
+
+
 def calibrated(i, weights=None):
-    """Does calibration have a weight for this type? With no calibration at all, everything uses reliability defaults."""
+    """Does calibration have a weight for this (type, media) pair? With no calibration at all, reliability defaults."""
     w = TYPE_WEIGHT if weights is None else weights
-    return not w or i.type in w
+    return not w or key(i) in w
 
 
 def weight(i, weights=None):
-    """Calibrated weight; 0 for a type calibration has no data for (shown, not counted); reliability default only when
-    nothing is calibrated yet."""
+    """Calibrated weight of the (type, media) pair; 0 for a pair calibration has no data for (shown, not counted);
+    reliability default only when nothing is calibrated yet."""
     w = TYPE_WEIGHT if weights is None else weights
-    return w.get(i.type, 0.0) if w else RELIABILITY_WEIGHT[i.reliability]
+    return w.get(key(i), 0.0) if w else RELIABILITY_WEIGHT[i.reliability]
 
 
 def contributions(indicators, weights=None):

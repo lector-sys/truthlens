@@ -133,6 +133,16 @@
   testsrc2 placeholder videos (`ph_vid_real/voice/wrongdate_*`) fire noise_inconsistency up to 1.0; excluding them
   would leave no video rows at all, so they stay until real clips replace them.
 
+## Per-media calibration (2026-11-19)
+- Weights are keyed by (indicator type, media of the evidence file), e.g. `noise_inconsistency/image` vs `/video`;
+  `calibrate.fit` counts each pair only on rows of that media; `fusion.key()` looks up the same pair; a pair without
+  data weighs 0 (an audio flag in an .mp4 is `/video`; caption findings on `context` are `/text`).
+- Re-run (SYNTHETIC, n=41, smoke-only rows excluded): the testsrc2 videos no longer drag image detectors down:
+  noise_inconsistency 0.16 → image 0.43 / video 0.06; ela_hotspot 0.04 → image 0.11 / video 0.06;
+  temporal_spike 0.41 → video 0.52; audio_splice / audio_click 0.65 → audio 0.56 / video 0.52; claim_date_mismatch
+  0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
+- Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
+
 ## Module map
 | File | Role |
 |---|---|
