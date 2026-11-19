@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 from rapidfuzz import fuzz
 from truthlens.vault import Case, CASES, sha256
 from truthlens import pipeline, report, fusion, llm
-from truthlens.analyzers import IMAGE_EXTS
+from truthlens.analyzers import IMAGE_EXTS, TEXT_EXTS
 from truthlens.analyzers.media_meta import readable_image
 
 IMAGE = IMAGE_EXTS
@@ -79,6 +79,12 @@ def where(loc):
     return "whole file"
 
 
+def _runs(mask):
+    """[(start, end)] index ranges where a boolean array is True."""
+    d = np.diff(np.concatenate([[0], np.asarray(mask, np.int8), [0]]))
+    return list(zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1)))
+
+
 def card(i):
     c = LEVEL[fusion.label(i.score * fusion.weight(i))][0]
     rel = " ↔ " + e(", ".join(i.related)) if i.related else ""
@@ -86,7 +92,8 @@ def card(i):
        f'<span class="mono small" style="float:right">score {i.score:.2f} '
        + (f'× weight {fusion.weight(i):.2f}' if fusion.calibrated(i) else f'· {fusion.UNCALIBRATED}') + '</span><br>'
        f'<span class="mono small muted">{e(where(i.location))}</span><br>{e(i.explanation)}<br>'
-       f'<span class="muted small">Could also be: {e("; ".join(i.alt_explanations))}</span></div>')
+       f'<span class="muted small">Could also be: {e("; ".join(i.alt_explanations))}</span><br>'
+       f'<span class="small">✔ Check: {e("; ".join(report.recommended(i)))}</span></div>')
 
 
 def dataset_badge(cal):
@@ -157,24 +164,31 @@ server_pill(() if pick.startswith("＋") else tuple(llm.fallback_used(Case(pick)
 if pick.startswith("＋"):
     st.title("New case")
     md('<div class="muted">Evidence is hashed (SHA-256) on arrival, stored read-only, and every step is logged.</div>')
-    files = st.file_uploader("Evidence: images, videos, audio", accept_multiple_files=True)
+    files = st.file_uploader("Evidence: images, videos, audio, text (.txt / .md)", accept_multiple_files=True)
     context = st.text_area("Caption / claims that came with the media (optional)",
                            placeholder='e.g. Flood at the campus library on 2026-11-02. She said "we cancelled the fest".')
+    pasted = st.text_area("Text evidence (optional): a message, post or article to examine as evidence",
+                          placeholder="Stored as pasted_text.txt with its own hash; its claims are checked against the media.")
     if files:
         rows = []
         for f in files:
             n = f.name.lower()
-            kind = "image" if n.endswith(IMAGE) else "video" if n.endswith(VIDEO) else "audio" if n.endswith(AUDIO) else "unsupported"
+            kind = ("image" if n.endswith(IMAGE) else "video" if n.endswith(VIDEO) else "audio" if n.endswith(AUDIO)
+                    else "text" if n.endswith(TEXT_EXTS) else "unsupported")
             rows.append(f'<div class="mono small">{e(f.name)} <span class="badge" style="background:#161E27;color:#8B98A5">'
                         f'{kind}</span> {hashlib.sha256(f.getvalue()).hexdigest()}</div>')
         md('<div class="panel"><div class="muted small">SHA-256 of each upload</div>' + "".join(rows) + "</div>")
     b1, b2 = st.columns([1, 6])
-    go = b1.button("Analyze", type="primary", disabled=not files)
-    fresh = b2.button("Analyze fresh", disabled=not files, help="Ask the models again instead of reusing cached answers")
+    empty = not files and not pasted.strip()
+    go = b1.button("Analyze", type="primary", disabled=empty)
+    fresh = b2.button("Analyze fresh", disabled=empty, help="Ask the models again instead of reusing cached answers")
     if go or fresh:
         llm.FRESH = fresh
         case = Case()
-        ok = {f.name: sha256(case.ingest(f.name, f.getvalue())) == hashlib.sha256(f.getvalue()).hexdigest() for f in files}
+        uploads = {f.name: f.getvalue() for f in files or []}
+        if pasted.strip():
+            uploads["pasted_text.txt"] = pasted.strip().encode("utf-8")
+        ok = {n: sha256(case.ingest(n, b)) == hashlib.sha256(b).hexdigest() for n, b in uploads.items()}
         md("".join(f'<div class="mono small">{"✓" if v else "✗"} {e(n)}: stored copy {"matches" if v else "DOES NOT match"} '
                    f'the upload hash</div>' for n, v in ok.items()))
         md('<div class="scan"></div>')
@@ -295,7 +309,9 @@ if screen == "Overview":
         bad = [f for f, ok in res["integrity"].items() if not ok]
         md('<div class="panel small" style="margin-top:12px">' + (f"✗ Integrity check FAILED: {e(', '.join(bad))}" if bad else
            f"✓ Integrity: all {len(res['integrity'])} evidence file(s) match their intake SHA-256.") + "</div>")
-        md('<div class="panel"><b>Summary</b><br>' + e(report.summary(res, case)) + "</div>")
+        md('<div class="panel"><b>Summary</b><br>' + e(report.summary(res, case)) + '<div style="margin-top:8px"><b>Recommended '
+           'human checks</b><ol style="margin:4px 0 0 18px">' + "".join(f"<li>{e(c)}</li>" for c in report.human_checks(inds)[:5])
+           + "</ol></div></div>")
 
 # ---------- evidence ----------
 elif screen == "Evidence":
@@ -364,22 +380,52 @@ elif screen == "Evidence":
             f'<g><title>{e(i.type)} {e(where(i.location))}</title><rect x="{X(tt(i)):.1f}" y="{14 if i.modality == "video" else 40}" '
             f'width="{max(3, X(i.location["end"]) - X(i.location["start"])) if "end" in i.location else 3:.1f}" height="18" rx="2" '
             f'fill="{"#38BDF8" if i.modality == "video" else "#F2B544"}"/></g>' for i in timed if i.modality in ("video", "audio"))
-        ticks = "".join(f'<text x="{X(s):.0f}" y="76" fill="#8B98A5" font-size="13">{s:.0f}s</text>' for s in np.linspace(0, dur, 9))
-        md(f'<div class="panel"><svg viewBox="0 0 1000 82" width="100%" role="img" aria-label="Flag timeline">'
+        fj, lj = case.artifact_path(f"{stem}_faces.json"), case.artifact_path(f"{stem}_lipsync.json")
+        track = json.loads(fj.read_text(encoding="utf-8")) if fj.exists() else {"rows": [], "face_ratio": 0}
+        lip = json.loads(lj.read_text(encoding="utf-8")) if lj.exists() else None
+        has = np.array(["box" in r for r in track["rows"]])
+        ts = [r["t"] for r in track["rows"]]
+        faces = "".join(f'<rect x="{X(ts[a]):.1f}" y="66" width="{max(2, X(ts[b - 1]) - X(ts[a])):.1f}" height="14" rx="2" '
+                        f'fill="#A3B18A"/>' for a, b in _runs(has)) if len(has) else ""
+
+        def curve(vals, color):
+            v = np.nan_to_num(np.asarray(vals, float))
+            v = (v - v.min()) / max(np.ptp(v), 1e-9)
+            return (f'<polyline fill="none" stroke="{color}" stroke-width="1.5" points="'
+                    + " ".join(f"{X(t):.1f},{126 - 34 * y:.1f}" for t, y in zip(lip["t"], v)) + '"/>')
+        lips = (curve(lip["mouth"], "#38BDF8") + curve(lip["audio_db"], "#F2B544")
+                + f'<text x="985" y="100" fill="#8B98A5" font-size="11" text-anchor="end">best lag {lip["lag_ms"]:+d} ms · '
+                  f'r {lip["r"]:.2f}</text>') if lip else ""
+        ticks = "".join(f'<text x="{X(s):.0f}" y="146" fill="#8B98A5" font-size="13">{s:.0f}s</text>' for s in np.linspace(0, dur, 9))
+        md(f'<div class="panel"><svg viewBox="0 0 1000 152" width="100%" role="img" aria-label="Flag timeline">'
            f'<text x="0" y="27" fill="#8B98A5" font-size="13">V</text><text x="0" y="53" fill="#8B98A5" font-size="13">A</text>'
+           f'<text x="0" y="78" fill="#8B98A5" font-size="11">face</text><text x="0" y="115" fill="#8B98A5" font-size="11">lips</text>'
            f'<rect x="20" y="14" width="960" height="18" fill="#161E27"/><rect x="20" y="40" width="960" height="18" fill="#161E27"/>'
-           f'{marks}{ticks}</svg><span class="muted small">Cyan: video flags · amber: audio flags · pick a flag to seek.</span></div>')
+           f'<rect x="20" y="66" width="960" height="14" fill="#161E27"/><rect x="20" y="90" width="960" height="40" fill="#10161D"/>'
+           f'{marks}{faces}{lips}{ticks}</svg><span class="muted small">Cyan: video flags · amber: audio flags · green: face '
+           f'visible ({track["face_ratio"]:.0%} of frames) · lips: mouth motion (cyan) vs speech loudness (amber)'
+           + ("" if lip else " · lip-sync not run (no face or no speech)") + ' · pick a flag to seek.</span></div>')
         if frames:
             show = [frames[k] for k in sorted(set(np.linspace(0, len(frames) - 1, 8).astype(int)))]
             with tc:
                 for row in (show[:4], show[4:]):
                     for col, f in zip(st.columns(4), row):
-                        col.image(str(f), caption=f"{int(f.stem[-4:]) - 1}s", width="stretch")
+                        t = int(f.stem[-4:]) - 1
+                        im = Image.open(f).convert("RGB")
+                        near = min((r for r in track["rows"] if "box" in r), key=lambda r: abs(r["t"] - t), default=None)
+                        if near and abs(near["t"] - t) < 0.5:
+                            x, y, w, h = near["box"]
+                            ImageDraw.Draw(im).rectangle([x, y, x + w, y + h], outline="#A3B18A", width=max(2, im.width // 160))
+                        col.image(im, caption=f"{t}s", width="stretch")
+    if ext in TEXT_EXTS:
+        md('<div class="panel mono small" style="white-space:pre-wrap">'
+           + e(path.read_text(encoding="utf-8", errors="replace")[:20000]) + "</div>")
     if ext in AUDIO or ext in VIDEO:
         spec = case.artifact_path(f"{stem}_spec.png")
         aflags = sorted((i for i in mine if i.modality == "audio" and "start" in i.location), key=tt)
         if spec.exists():
-            st.image(str(spec), caption="Spectrogram · shaded = flagged span · low frequencies at the bottom", width="stretch")
+            st.image(str(spec), caption="Spectrogram · low frequencies at the bottom · red: splice/click span · blue: "
+                     "too-clean pauses · amber: flat-prosody sentences · cyan line: band-limit cutoff", width="stretch")
         sel = st.selectbox("Play from a flagged span (0.5 s before)", ["start"] + [f'{i.location["start"]:.2f}s · {i.type}' for i in aflags])
         wav = case.artifact_path(f"{stem}_16k.wav")
         st.audio(str(wav if wav.exists() else path), start_time=0 if sel == "start" else int(max(0, float(sel.split("s")[0]) - 0.5)))

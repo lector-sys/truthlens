@@ -25,6 +25,7 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 <p class="note">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
 {% if provenance %}<p class="note">{{ provenance }} Model answers: {{ source }}.</p>{% endif %}
 <h2>Summary</h2><p>{{ summary }}</p>
+<p><b>Recommended human checks</b></p><ol>{% for c in checks[:5] %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
 <h2>Evidence & integrity</h2>
 <table><tr><th>File</th><th>SHA-256</th><th>Unchanged since ingest</th><th>Assessment</th></tr>
 {% for e in ingests %}<tr><td>{{ e.file }}</td><td><code>{{ e.sha256 }}</code></td><td>{{ 'yes' if integrity.get(e.file) else 'NO' }}</td>
@@ -35,11 +36,11 @@ compression-based checks (ELA) see the conversion, not the original. The evidenc
 {% if not indicators %}<p>No indicators were raised.</p>{% endif %}
 {% for g, what in groups.items() %}{% set grp = rows|selectattr('0.type', 'in', group_types[g])|list %}{% if grp %}
 <h3>{{ g }}: {{ what }}</h3>
-<table><tr><th>File</th><th>Indicator</th><th>Location</th><th>Score / reliability</th><th>Why</th><th>Could also be</th><th>Evidence</th></tr>
+<table><tr><th>File</th><th>Indicator</th><th>Location</th><th>Score / reliability</th><th>Why</th><th>Could also be</th><th>Recommended check</th><th>Evidence</th></tr>
 {% for i, img in grp %}<tr><td>{{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %}</td><td>{{ i.modality }} · {{ i.type }}</td>
 <td>{{ i.location }}</td><td>{{ '%.2f' % i.score }} / {{ i.reliability }}{% if not calibrated(i) %}<br><i>{{ uncal }}</i>{% endif %}</td><td>{{ i.explanation }}</td>
-<td>{{ i.alt_explanations|join('; ') }}</td><td>{% if img %}<img src="{{ img }}" alt="{{ i.type }} artifact">{% endif %}</td></tr>{% endfor %}</table>{% endif %}{% endfor %}
-<h2>Recommended human checks</h2><ol>{% for c in checks %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
+<td>{{ i.alt_explanations|join('; ') }}</td><td>{{ recommended(i)|join('; ') }}</td><td>{% if img %}<img src="{{ img }}" alt="{{ i.type }} artifact">{% endif %}</td></tr>{% endfor %}</table>{% endif %}{% endfor %}
+<h2>All recommended human checks</h2><ol>{% for c in checks %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
 <h2>Limitations</h2><ul>
 <li>Detectors are heuristics tuned on a small team-made test set; reliability labels reflect that, not a guarantee.</li>
 <li>Re-compression, resizing and platform uploads can create or hide indicators.</li>
@@ -55,6 +56,31 @@ def data_uri(path):
     if not p or not p.exists() or p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
         return None
     return f"data:{mimetypes.guess_type(p.name)[0]};base64,{base64.b64encode(p.read_bytes()).decode()}"
+
+
+ORIGINAL = "Obtain the original file from the source device or account (not a messenger or social-media copy)"
+REVERSE = "Reverse image search the image (or keyframes) to find where and when it first appeared"
+VOICE = "Compare the voice with a verified recording of the same speaker (pitch, rhythm, breaths, room sound)"
+CHECKS = {  # what a person should do next, per indicator type
+    "exif_missing": ORIGINAL, "exif_edit_software": ORIGINAL, "reencoded": ORIGINAL, "no_creation_time": ORIGINAL,
+    "ela_hotspot": REVERSE, "noise_inconsistency": REVERSE, "copy_move": REVERSE,
+    "synthetic_provenance": ORIGINAL + "; verify its Content Credentials with c2patool or contentcredentials.org/verify",
+    "spectral_upsampling": REVERSE, "synthetic_visual_artifacts": REVERSE,
+    "temporal_spike": ORIGINAL, "face_region_flicker": "Compare the face with verified footage of the same person",
+    "lipsync_mismatch": "Watch the speech at reduced speed with sound; ask whether the clip was dubbed or voiced over",
+    "audio_splice": ORIGINAL, "audio_click": ORIGINAL, "uniform_pauses": VOICE,
+    "synthetic_bandlimit": "Ask how the audio was recorded and shared; " + ORIGINAL[0].lower() + ORIGINAL[1:],
+    "synthetic_silence": VOICE, "synthetic_prosody": VOICE,
+    "caption_image_mismatch": REVERSE, "caption_frame_mismatch": REVERSE,
+    "claim_date_mismatch": "Ask the source when and where it was captured; check the date against independent reports",
+    "quote_not_in_transcript": "Listen to the full recording and ask the source where the quote comes from",
+    "text_inconsistency": "Ask the author or source to clarify the contradicting statements",
+}
+
+
+def recommended(i):
+    """Human checks for one finding: what to do next (by type) and where to look (by location)."""
+    return [c for c in (CHECKS.get(i.type), human_check(i)) if c]
 
 
 def human_check(i):
@@ -74,18 +100,19 @@ def human_check(i):
 
 
 def human_checks(indicators, limit=10):
-    """Deduplicated checks, strongest indicators first."""
+    """Deduplicated recommended checks for the case, strongest indicators first."""
     ordered = sorted(indicators, key=lambda i: -i.score)
-    return list(dict.fromkeys(c for c in map(human_check, ordered) if c))[:limit]
+    return list(dict.fromkeys(c for i in ordered for c in recommended(i)))[:limit]
 
 
 def summary(result, case=None):
     """LLM summary from indicators only; cached on the result so Streamlit reruns don't re-bill the API."""
     if "summary" not in result:
         a, inds = result["assessment"], result["indicators"]
-        data = json.dumps({"assessment": a, "indicators": [{**i.to_dict(), "counted_in_label": fusion.calibrated(i)}
-                                                           for i in inds]}, default=str)
-        r = llm.ask_json(SUMMARY_PROMPT, llm.untrusted("indicators", data), schema=SUMMARY_SCHEMA, name="summary",
+        top = sorted(inds, key=lambda i: -i.score * fusion.weight(i))[:20]  # the summary names the strongest 2-3 anyway
+        data = json.dumps({"assessment": a, "n_indicators": len(inds),
+                           "indicators": [{**i.to_dict(), "counted_in_label": fusion.calibrated(i)} for i in top]}, default=str)
+        r = llm.ask_json(SUMMARY_PROMPT, llm.untrusted("indicators", data), schema=SUMMARY_SCHEMA, name="summary", max_tokens=600,
                          version=SUMMARY_VERSION, effort="low", case=case)
         top = [k for k, v in sorted(fusion.contributions(inds).items(), key=lambda kv: -kv[1]) if v > 0][:3]
         fallback = (f"{a['case']['label']} across {len(a['files'])} file(s). Strongest: "
@@ -113,7 +140,7 @@ def render(case, result):
     groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
               "Context": "the caption or claims disagree with the media"}
     group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
-    return TEMPLATE.render(calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), coverage_line=pipeline.coverage_line(cov), groups=groups,
+    return TEMPLATE.render(recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
                            calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],

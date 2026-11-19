@@ -18,7 +18,8 @@ OF = " of manipulation or synthetic generation"
 LEVELS = [(0.75, "Strong indicators" + OF), (0.45, "Moderate indicators" + OF), (0.15, "Weak indicators" + OF),
           (0.0, "No significant indicators" + OF)]
 LIMITED = "Limited analysis: no significant indicators"
-GENERATED = {"synthetic_provenance", "synthetic_visual_artifacts", "spectral_upsampling"}
+GENERATED = {"synthetic_provenance", "synthetic_visual_artifacts", "spectral_upsampling", "synthetic_bandlimit",
+             "synthetic_silence", "synthetic_prosody", "lipsync_mismatch", "face_region_flicker"}
 CONTEXT = {"text_inconsistency", "caption_image_mismatch", "caption_frame_mismatch", "claim_date_mismatch",
            "quote_not_in_transcript", "image_matches_frame"}
 

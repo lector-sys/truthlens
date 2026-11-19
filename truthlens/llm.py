@@ -194,13 +194,13 @@ def _failure(e):
     return {"network": verdict == "network", "verdict": verdict, "probe": note, "stage": e.stage, **e.timing}
 
 
-def _ollama(model, system, user, jpegs, schema):
+def _ollama(model, system, user, jpegs, schema, max_tokens=MAX_TOKENS):
     """Ollama's native /api/chat, streamed (its OpenAI-compatible endpoint reports no timings) via _post. -> (parsed
     reply, stats): client-side connect_s / ttfb_s (first chunk = prefill done) / total_s, and server-side queue_s =
     server time not spent loading, reading or generating, i.e. waiting behind other requests."""
     u = urlparse(OLLAMA_URL)
     body = {"model": model, "stream": True, "format": schema,
-            "options": {"temperature": 0, "seed": SEED, "num_predict": MAX_TOKENS},
+            "options": {"temperature": 0, "seed": SEED, "num_predict": max_tokens},
             "messages": [{"role": "system", "content": f"{system}\n\n{_format_rules(schema)}\n\n{GUARD}"},
                          {"role": "user", "content": user, "images": [base64.b64encode(j).decode() for j in jpegs]}]}
     status, data, timing = _post(f"{u.scheme}://{u.netloc}/api/chat", json.dumps(body), {"Content-Type": "application/json"},
@@ -218,12 +218,12 @@ def _ollama(model, system, user, jpegs, schema):
     return json.loads(d["message"]["content"]), stats
 
 
-def _call(provider, c, model, system, user, images, schema, name, effort):
+def _call(provider, c, model, system, user, images, schema, name, effort, max_tokens=MAX_TOKENS):
     """One request -> (parsed reply, stats: tokens, image sizes sent, and server timings where the provider gives them)."""
     sent = [_jpeg(p) for p in images]
     stats = {"images_px": [list(wh) for _, wh in sent], "images_kb": [round(len(j) / 1024) for j, _ in sent]} if sent else {}
     if provider == "ollama":
-        out, st = _ollama(model, system, user, [j for j, _ in sent], schema)
+        out, st = _ollama(model, system, user, [j for j, _ in sent], schema, max_tokens)
         return out, {**stats, **st}
     if provider == "openai":
         content = [{"type": "input_text", "text": user}]
@@ -237,7 +237,7 @@ def _call(provider, c, model, system, user, images, schema, name, effort):
     content = [{"type": "text", "text": user}] + [{"type": "image_url", "image_url": {
         "url": "data:image/jpeg;base64," + base64.b64encode(j).decode()}} for j, _ in sent]
     r = c.chat.completions.create(
-        model=model, temperature=0, seed=SEED, max_tokens=MAX_TOKENS,
+        model=model, temperature=0, seed=SEED, max_tokens=max_tokens,
         messages=[{"role": "system", "content": f"{system}\n\n{_format_rules(schema)}\n\n{GUARD}"},
                   {"role": "user", "content": content}],
         response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True}})
@@ -260,7 +260,7 @@ def _save(f, info, out):
     f.write_text(json.dumps({**info, "date": datetime.date.today().isoformat(), "out": out}), encoding="utf-8")
 
 
-def ask_json(system, user, images=(), *, schema, name, version, effort="low", case=None):
+def ask_json(system, user, images=(), *, schema, name, version, effort="low", case=None, max_tokens=MAX_TOKENS):
     """Structured reply as a dict matching `schema`, or None. Order: the cache (key: evidence bytes + prompt + prompt
     version + model, skipped when FRESH), then each provider (retried once on an invalid or failed reply), then None
     (logged "check_not_run")."""
@@ -282,7 +282,7 @@ def ask_json(system, user, images=(), *, schema, name, version, effort="low", ca
             t0 = time.time()
             stats = {}
             try:
-                out, stats = _call(p, c, model, system, user, images, schema, name, effort)
+                out, stats = _call(p, c, model, system, user, images, schema, name, effort, max_tokens)
                 err = invalid(out, schema)
             except NetworkError as e:  # GPU server: probe classifies busy vs network, then retry on a fresh connection
                 err, stats = str(e)[:200], _failure(e)
