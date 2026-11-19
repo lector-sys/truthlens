@@ -206,6 +206,8 @@ llm_calls = [x for x in log if x["action"] == "llm_call"]
 top_l, top_r = st.columns([2, 3])
 top_l.markdown(f"## {e(case.id)} {pill(res['headline'])}", unsafe_allow_html=True)
 cov_line = pipeline.coverage_line(res["coverage"])
+for w in llm.server_warnings(log):
+    st.warning(w, icon="⏳" if w.startswith("GPU server busy") else "📡")
 want = qp.get("screen", "Overview")
 screen = top_r.radio("Screen", SCREENS, horizontal=True, label_visibility="collapsed",
                      index=SCREENS.index(want) if want in SCREENS else 0)

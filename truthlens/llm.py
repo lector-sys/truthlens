@@ -3,7 +3,7 @@ then LLM_PROVIDERS; default ollama only): "ollama" (own GPU server, Chat Complet
 OpenAI-compatible), "openai" (Luna via the Responses API). Each reply is validated against its JSON schema locally; a bad
 or failed reply is retried once, then the next provider is tried, else None plus a "check_not_run" log entry.
 Audio goes to the whisper.cpp server at WHISPER_URL (or OpenAI transcription if that is unset), never to a chat model."""
-import base64, datetime, hashlib, http.client, io, json, os, socket, subprocess, time, urllib.request, uuid, wave
+import base64, datetime, hashlib, http.client, io, json, os, subprocess, time, urllib.request, uuid, wave
 from pathlib import Path
 from urllib.parse import urlparse
 from PIL import Image
@@ -121,34 +121,62 @@ def _format_rules(schema):
             "no other keys): " + json.dumps(schema, separators=(",", ":")))
 
 
+CONNECT_S, TTFB_S, READ_S = 3, 20, 60  # connect; first byte of a short model call; any later read
+
+
+class NetworkError(Exception):
+    """The GPU server didn't answer: connect failed or stalled, no first byte in time, or the read stalled.
+    `.stage` is "connect" | "first byte" | "read"; `.timing` has the client-side seconds measured so far."""
+
+    def __init__(self, stage, err, timing):
+        super().__init__(f"{stage}: {err!r}")
+        self.stage, self.timing = stage, timing
+
+
+def _post(url, body, headers, ttfb=None):
+    """POST on a fresh connection (never a pooled one, so a retry can't land on a dead socket).
+    -> (status, bytes, {"connect_s", "ttfb_s", "total_s"}); NetworkError on any socket-level failure."""
+    u = urlparse(url)
+    t0, timing, stage = time.time(), {}, "connect"
+    conn = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.hostname, u.port, timeout=CONNECT_S)
+    try:
+        conn.connect()
+        timing["connect_s"] = round(time.time() - t0, 3)
+        stage = "first byte"
+        conn.sock.settimeout(TTFB_S if ttfb is None else ttfb)
+        conn.request("POST", u.path or "/", body, headers)
+        r = conn.getresponse()
+        timing["ttfb_s"] = round(time.time() - t0, 3)
+        stage = "read"
+        if conn.sock:
+            conn.sock.settimeout(READ_S)
+        data = r.read()
+    except (OSError, http.client.HTTPException) as e:  # timeout, refused, reset, DNS, truncated response
+        timing["total_s"] = round(time.time() - t0, 3)
+        raise NetworkError(stage, e, timing) from e
+    finally:
+        conn.close()
+    timing["total_s"] = round(time.time() - t0, 3)
+    return r.status, data, timing
+
+
 def _ollama(model, system, user, jpegs, schema):
-    """Ollama's native /api/chat (not its OpenAI-compatible endpoint, which reports no timings). Connect timeout 5 s,
-    read timeout 60 s. -> (parsed reply, stats incl. queue_s = server time not spent loading, reading or generating,
-    i.e. waiting behind other requests: this server runs one request at a time)."""
+    """Ollama's native /api/chat (its OpenAI-compatible endpoint reports no timings) via _post. -> (parsed reply, stats):
+    client-side connect_s / ttfb_s / total_s, and server-side queue_s = server time not spent loading, reading or
+    generating, i.e. waiting behind other requests (this server runs one request at a time)."""
     u = urlparse(OLLAMA_URL)
     body = {"model": model, "stream": False, "format": schema,
             "options": {"temperature": 0, "seed": SEED, "num_predict": MAX_TOKENS},
             "messages": [{"role": "system", "content": f"{system}\n\n{_format_rules(schema)}\n\n{GUARD}"},
                          {"role": "user", "content": user, "images": [base64.b64encode(j).decode() for j in jpegs]}]}
-    conn = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.hostname, u.port, timeout=5)
-    try:
-        try:
-            conn.connect()
-        except OSError as e:  # refused / unreachable / no route: not worth a retry
-            raise ConnectionError(f"connect to {u.hostname}: {e!r}") from e
-        conn.sock.settimeout(60)
-        conn.request("POST", "/api/chat", json.dumps(body), {"Content-Type": "application/json"})
-        r = conn.getresponse()
-        data = r.read()
-    finally:
-        conn.close()
-    if r.status != 200:
-        raise RuntimeError(f"ollama HTTP {r.status}: {data[:200]!r}")
+    status, data, timing = _post(f"{u.scheme}://{u.netloc}/api/chat", json.dumps(body), {"Content-Type": "application/json"})
+    if status != 200:
+        raise RuntimeError(f"ollama HTTP {status}: {data[:200]!r}")
     d = json.loads(data)
     sec = {k: d.get(f"{k}_duration", 0) / 1e9 for k in ("total", "load", "prompt_eval", "eval")}
     stats = {"input_tokens": d.get("prompt_eval_count"), "output_tokens": d.get("eval_count"), "done_reason": d.get("done_reason"),
              "load_s": round(sec["load"], 2), "prefill_s": round(sec["prompt_eval"], 2), "gen_s": round(sec["eval"], 2),
-             "queue_s": round(max(0.0, sec["total"] - sec["load"] - sec["prompt_eval"] - sec["eval"]), 2)}
+             "queue_s": round(max(0.0, sec["total"] - sec["load"] - sec["prompt_eval"] - sec["eval"]), 2), **timing}
     return json.loads(d["message"]["content"]), stats
 
 
@@ -218,12 +246,14 @@ def ask_json(system, user, images=(), *, schema, name, version, effort="low", ca
             try:
                 out, stats = _call(p, c, model, system, user, images, schema, name, effort)
                 err = invalid(out, schema)
-            except (ConnectionError, socket.gaierror, APIConnectionError) as e:
+            except NetworkError as e:  # GPU server: stalled / refused / no answer; the retry opens a fresh connection
+                err, stats = str(e)[:200], {"network": True, "stage": e.stage, **e.timing}
+            except APIConnectionError as e:  # cloud SDK providers
                 if not isinstance(e, APITimeoutError):  # unreachable: a retry won't help, go to the next provider
                     why.append(f"{p}: {e!r}"[:200])
                     break
                 err = repr(e)[:200]
-            except Exception as e:  # read timeout (e.g. queued behind another client), API error, unparsable JSON
+            except Exception as e:  # API error, unparsable JSON
                 err = repr(e)[:200]
             if err is None:
                 info = {"provider": p, "model": model, "host": host(p), "cloud": p in CLOUD}
@@ -250,10 +280,11 @@ def _post_audio(wav):
     body = b"".join(f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields.items())
     body += (f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{Path(wav).stem}.flac"\r\n'
              f'Content-Type: audio/flac\r\n\r\n').encode() + flac + f"\r\n--{b}--\r\n".encode()
-    req = urllib.request.Request(WHISPER_URL.rstrip("/") + "/inference", data=body,
-                                 headers={"Content-Type": f"multipart/form-data; boundary={b}"})
-    with urllib.request.urlopen(req, timeout=30 + 1.0 * seconds) as r:
-        return json.load(r)
+    status, data, timing = _post(WHISPER_URL.rstrip("/") + "/inference", body,
+                                 {"Content-Type": f"multipart/form-data; boundary={b}"}, ttfb=30 + 1.0 * seconds)
+    if status != 200:
+        raise RuntimeError(f"whisper HTTP {status}: {data[:200]!r}")
+    return json.loads(data), timing
 
 
 def transcribe(path, case=None):
@@ -265,10 +296,18 @@ def transcribe(path, case=None):
     info = ({"provider": "whisper", "model": WHISPER_MODEL, "host": host("whisper"), "cloud": False} if WHISPER_URL else
             {"provider": "openai", "model": TRANSCRIBE_MODEL, "host": host("openai"), "cloud": True})
     f = _cache_file("transcribe", info["model"], files=[path])
-    t0, segs, why = time.time(), None, "no WHISPER_URL or OPENAI_API_KEY set"
+    t0, segs, why, timing = time.time(), None, "no WHISPER_URL or OPENAI_API_KEY set", {}
     try:
         if WHISPER_URL:
-            r = _post_audio(path)
+            for attempt in (1, 2):  # a network failure is retried once, on a fresh connection
+                try:
+                    r, timing = _post_audio(path)
+                    break
+                except NetworkError as e:
+                    _log(case, "llm_attempt_failed", check="transcribe", provider="whisper", attempt=attempt, error=str(e)[:200],
+                         network=True, stage=e.stage, **e.timing)
+                    if attempt == 2:
+                        raise
             segs = [{"start": s["start"], "end": s["end"], "text": s["text"],
                      "words": [{"start": w["start"], "end": w["end"], "word": w["word"]} for w in s.get("words", [])]}
                     for s in r.get("segments", [])]
@@ -283,7 +322,8 @@ def transcribe(path, case=None):
         why = repr(e)[:300]
     if segs is not None:
         _save(f, info, segs)
-        _log(case, "llm_call", check="transcribe", cached=False, segments=len(segs), seconds=round(time.time() - t0, 2), **info)
+        _log(case, "llm_call", check="transcribe", cached=False, segments=len(segs), seconds=round(time.time() - t0, 2),
+             **timing, **info)
         return segs
     _log(case, "check_not_run", check="transcribe", reason=why)
     return None
@@ -328,3 +368,17 @@ def ping():
     except OSError:
         return False, None
     return True, round((time.time() - t0) * 1000)
+
+
+BUSY_S = 5.0
+
+
+def server_warnings(log):
+    """Dashboard warnings for this case's GPU-server calls. "busy" only when the server itself reports > BUSY_S queued
+    (queue_s); "network" when the client gave up: connect failed or stalled, no first byte in time, or the read stalled."""
+    out = [f"GPU server busy, waited {e['queue_s']:.0f} s · {e['check']}" for e in log
+           if e["action"] == "llm_call" and (e.get("queue_s") or 0) > BUSY_S]
+    out += [f"GPU server didn't respond (network), {'retried' if e.get('attempt', 1) == 1 else 'retry failed too'} · "
+            f"{e['check']} (no answer at {e.get('stage', '?')} after {e.get('total_s', 0):.0f} s)" for e in log
+            if e["action"] == "llm_attempt_failed" and e.get("network")]
+    return out

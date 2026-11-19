@@ -1,5 +1,5 @@
 """python test_smoke.py: end-to-end check of vault, image analyzer, fusion, cross-modal, report."""
-import io, json, re, wave
+import io, json, os, re, shutil, socket, subprocess, threading, wave
 from types import SimpleNamespace as NS
 import numpy as np
 from PIL import Image
@@ -173,6 +173,44 @@ try:
     pv = image.synthetic_provenance(case.dir / "evidence" / "gen_xmp.jpg", case)
     assert [(i.type, i.score) for i in pv] == [("synthetic_provenance", 0.9)] and pv[0].alt_explanations, pv
     assert image.synthetic_provenance(case.dir / "evidence" / "spliced.jpg", case) == []
+    exe = os.getenv("C2PATOOL") or shutil.which("c2patool")
+    if exe:  # sign with c2patool's built-in test certificate: verified when intact, failed once one byte changes
+        man = case.artifact_path("c2pa_manifest.json")
+        man.write_text(json.dumps({"claim_generator_info": [{"name": "smoke"}], "assertions": [{"label": "c2pa.actions",
+                       "data": {"actions": [{"action": "c2pa.created", "digitalSourceType":
+                                             "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"}]}}]}))
+        src, signed = case.artifact_path("c2pa_in.jpg"), case.artifact_path("c2pa_signed.jpg")
+        src.write_bytes(jpeg(bg, q=90))
+        subprocess.run([exe, str(src), "-m", str(man), "-o", str(signed), "-f"], capture_output=True, check=True)
+        ok = image.synthetic_provenance(signed, case)[0].explanation
+        assert "C2PA manifest verified by c2patool" in ok and "trainedAlgorithmicMedia" in ok, ok
+        d = bytearray(signed.read_bytes())
+        d[-5000] ^= 0xFF
+        signed.write_bytes(bytes(d))
+        bad = image.synthetic_provenance(signed, case)[0].explanation
+        assert "failed verification" in bad and "dataHash.mismatch" in bad, bad
+    # GPU server: a connection that accepts but never answers -> given up at "first byte", retried on a NEW connection,
+    # shown as a network warning (not "busy"); a server-reported queue > 5 s -> "busy"
+    stall = socket.socket()
+    stall.bind(("127.0.0.1", 0))
+    stall.listen(4)
+    conns = []
+    threading.Thread(target=lambda: [conns.append(stall.accept()[0]) for _ in range(2)], daemon=True).start()
+    saved = (llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.FRESH)
+    llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.FRESH = (
+        ["ollama"], {"ollama": object()}, f"http://127.0.0.1:{stall.getsockname()[1]}/v1", 0.5, True)
+    try:
+        assert crossmodal._ask_caption("stalled server", [], case) is None
+    finally:
+        llm.PROVIDERS, llm._clients, llm.OLLAMA_URL, llm.TTFB_S, llm.FRESH = saved
+        stall.close()
+    fails = [e for e in case.entries() if e["action"] == "llm_attempt_failed"][-2:]
+    assert len(conns) == 2 and [f["stage"] for f in fails] == ["first byte"] * 2 and fails[0]["connect_s"] < 1, fails
+    log = [{"action": "llm_call", "check": "summary", "queue_s": 26.6}, {"action": "llm_call", "check": "claims", "queue_s": 0.3}]
+    warn = llm.server_warnings(log + fails)
+    assert warn[0] == "GPU server busy, waited 27 s · summary" and len(warn) == 3, warn
+    assert warn[1].startswith("GPU server didn't respond (network), retried · caption_consistency (no answer at first byte"), warn
+    assert "retry failed too" in warn[2], warn
     up = Image.fromarray(ph.scene(w=320, h=240)).resize((640, 480), Image.BICUBIC)
     sp = image.spectral_upsampling(Path("up.png"), up, case)
     assert [i.type for i in sp] == ["spectral_upsampling"] and sp[0].score > 0.5 and Path(sp[0].artifact).exists(), sp
@@ -188,14 +226,14 @@ try:
         nc.delete()
 
     # whisper: the request carries the audio and fixed options only, never caption / claim / quote text
-    sent, urlopen = [], llm.urllib.request.urlopen
+    sent, post = [], llm._post
 
-    def fake_urlopen(req, timeout):
-        sent.append(req.data)
-        return io.BytesIO(b'{"segments":[{"start":0,"end":1,"text":" hi","words":[{"start":0,"end":1,"word":" hi"}]}]}')
+    def fake_post(url, body, headers, ttfb):
+        sent.append(body)
+        return 200, b'{"segments":[{"start":0,"end":1,"text":" hi","words":[{"start":0,"end":1,"word":" hi"}]}]}', {"total_s": 0.1}
 
     wcase = Case("smoke_whisper")
-    llm.WHISPER_URL, llm.urllib.request.urlopen = "http://whisper.test", fake_urlopen
+    llm.WHISPER_URL, llm._post = "http://whisper.test", fake_post
     try:
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
@@ -207,7 +245,7 @@ try:
         assert sent and b"fLaC" in sent[0] and not any(c.encode() in b for b in sent for c in caption), sent
         assert json.loads(wcase.artifact_path("talk_transcript.json").read_text())[0]["words"][0]["word"] == " hi"
     finally:
-        llm.WHISPER_URL, llm.urllib.request.urlopen = "", urlopen
+        llm.WHISPER_URL, llm._post = "", post
         wcase.delete()
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
