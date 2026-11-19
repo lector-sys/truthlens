@@ -6,7 +6,8 @@ from PIL import Image
 from truthlens.vault import Case
 from truthlens.indicator import Indicator
 from truthlens import pipeline, report, fusion, crossmodal, llm
-from truthlens.analyzers import audio
+from pathlib import Path
+from truthlens.analyzers import audio, image
 import calibrate
 
 
@@ -29,6 +30,19 @@ try:
     assert "ela_hotspot" in types, types
     x, y, w, h = next(i for i in res["indicators"] if i.type == "ela_hotspot").location["bbox"]
     assert x <= 96 and y <= 96 and x + w >= 160 and y + h >= 160, (x, y, w, h)  # box covers the splice
+    x, y, w, h = next(i for i in res["indicators"] if i.type == "noise_inconsistency").location["bbox"]
+    assert x <= 96 and y <= 96 and x + w >= 160 and y + h >= 160, (x, y, w, h)  # noise map finds it too
+
+    # copy-move: a cloned 64 px patch of texture is found with both boxes; the untouched texture stays quiet
+    tex = rng.integers(0, 255, (256, 320), dtype=np.uint8)
+    untouched = Image.open(io.BytesIO(jpeg(np.stack([tex] * 3, 2), q=95)))
+    tex[150:214, 200:264] = tex[20:84, 30:94]
+    cloned = Image.open(io.BytesIO(jpeg(np.stack([tex] * 3, 2), q=95)))
+    assert image.copy_move(Path("t.jpg"), untouched, case) == []
+    cm = image.copy_move(Path("t.jpg"), cloned, case)
+    assert len(cm) == 1, cm
+    (sx, sy, _, _), (tx, ty, _, _) = cm[0].location["bbox"], cm[0].location["bbox2"]
+    assert 20 <= sx < 94 and 20 <= sy < 84 and 200 <= tx < 264 and 150 <= ty < 214, cm[0].location
     assert all(res["integrity"].values())
     html = report.render(case, res)
     assert "spliced.jpg" in html and "data:image/png;base64," in html  # ELA heatmap embedded

@@ -19,7 +19,11 @@ def scene(sigma=4.0, w=640, h=480):
     for _ in range(6):
         cx, cy, r, a = rng.random(), rng.random() * 0.75, 0.05 + 0.15 * rng.random(), rng.uniform(-60, 60)
         base = base + a * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / r ** 2)
-    rgb = np.stack([base * k for k in (1.0, 0.9, 0.8)], axis=2) + rng.normal(0, sigma, (h, w, 3))
+    rgb = np.stack([base * k for k in (1.0, 0.9, 0.8)], axis=2)
+    for _ in range(int(w * h / 800)):  # textured "objects" so keypoint detectors have corners, as in photos
+        x, y, s = int(rng.integers(0, w)), int(rng.integers(0, h)), int(rng.integers(4, 24))
+        rgb[y:y + s, x:x + int(rng.integers(4, 24))] += rng.uniform(-50, 50, 3)
+    rgb = rgb + rng.normal(0, sigma, (h, w, 3))
     return np.clip(rgb, 0, 255).astype(np.uint8)
 
 
