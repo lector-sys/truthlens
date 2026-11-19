@@ -1,7 +1,7 @@
 """OWNER A. Image forensics. Edited: EXIF, error level analysis, sensor-noise inconsistency, copy-move (ORB self-matching).
 Generated: provenance metadata (C2PA / XMP DigitalSourceType / generator names), spectral upsampling traces, visual
 artifacts listed by the vision model. Formats Pillow can't read are analysed via a converted PNG copy."""
-import io, json, re, shutil, subprocess
+import io, json, os, re, shutil, subprocess
 from collections import Counter
 import cv2
 import numpy as np
@@ -167,21 +167,33 @@ def _metadata_text(data, img):
 
 
 def _c2patool(path):
-    """(claim generator, digital source types, validation problems) from c2patool, or None if not installed / unreadable."""
-    if not shutil.which("c2patool"):
+    """(generator text, digital source types, status sentence) read and validated by c2patool (C2PATOOL in .env, else
+    PATH), or None if it isn't installed or found no manifest. Status follows c2patool's validation_state:
+    Trusted = signature valid and signer on a trust list; Valid = signature and content hashes valid, signer not
+    checked against a trust list; Invalid = verification failed (failure codes listed)."""
+    exe = os.getenv("C2PATOOL") or shutil.which("c2patool")
+    if not exe:
         return None
-    r = subprocess.run(["c2patool", str(path)], capture_output=True, text=True)
+    r = subprocess.run([exe, str(path)], capture_output=True, text=True)
     try:
         store = json.loads(r.stdout)
     except ValueError:
         return None
     m = store.get("manifests", {}).get(store.get("active_manifest"), {})
     raw = json.dumps(m).lower()
-    # older releases: "validation_status" list; newer: "validation_results" -> activeManifest -> failure
-    failures = store.get("validation_status") or (store.get("validation_results") or {}).get("activeManifest", {}).get("failure", [])
-    problems = [f.get("code", str(f)) if isinstance(f, dict) else str(f) for f in failures]
-    return (str(m.get("claim_generator") or m.get("claim_generator_info") or ""),
-            sorted(set(re.findall(r"digitalsourcetype/(\w+)", raw))), problems)
+    gens = [str(m.get("claim_generator") or "")] + [g.get("name", "") for g in m.get("claim_generator_info", []) or []]
+    gens += re.findall(r'"softwareagent": \{"name": "([^"]+)"', raw)
+    issuer = (m.get("signature_info") or {}).get("issuer") or "an unknown signer"
+    state = store.get("validation_state", "")
+    fails = [f.get("code", "?") for f in (store.get("validation_results") or {}).get("activeManifest", {}).get("failure", [])]
+    if state == "Trusted":
+        status = f"C2PA manifest verified by c2patool: signature valid, signed by {issuer} (on the trust list)"
+    elif state == "Valid":
+        status = (f"C2PA manifest verified by c2patool: signature and content hashes valid, signed by {issuer} "
+                  "(signer not checked against a trust list)")
+    else:
+        status = f"C2PA manifest present but failed verification by c2patool ({', '.join(fails) or state or 'unknown'})"
+    return " ".join(gens), sorted(set(re.findall(r"digitalsourcetype/(\w+)", raw))), status
 
 
 def synthetic_provenance(path, case):
@@ -195,8 +207,7 @@ def synthetic_provenance(path, case):
     c2pa = b"c2pa" in low and (b"jumb" in low or b"cabx" in low)
     tool = _c2patool(path) if c2pa else None
     if tool:
-        gen, kinds, problems = tool
-        status = "C2PA manifest verified by c2patool" if not problems else f"C2PA manifest present, validation failed ({problems[0]})"
+        gen, kinds, status = tool
         types = " ".join(kinds)
     else:
         gen, status, types = "", "C2PA manifest present (not verified)", ""
