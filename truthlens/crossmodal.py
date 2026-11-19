@@ -6,9 +6,9 @@ from PIL import Image
 from rapidfuzz import fuzz
 from . import llm
 from .indicator import Indicator
-from .analyzers.media_meta import ffprobe, encoder_tags
+from .analyzers import IMAGE_EXTS
+from .analyzers.media_meta import ffprobe, encoder_tags, readable_image
 
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 AV_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".wav", ".mp3", ".m4a", ".flac", ".ogg")
 VIDEO_EXTS = AV_EXTS[:5]
 CAPTION_PROMPT = """You compare a caption with an image for a forensic reviewer.
@@ -55,9 +55,10 @@ def link_timestamps(indicators, window=0.5):
 def caption_vs_images(context_text, case):
     out = []
     for p in case.evidence():
-        if p.suffix.lower() not in IMAGE_EXTS:
+        src = readable_image(p, case) if p.suffix.lower() in IMAGE_EXTS else None
+        if src is None:
             continue
-        r = _ask_caption(context_text, [p], case)
+        r = _ask_caption(context_text, [src], case)
         if r is None:
             return []  # offline
         case.log("caption_check", file=p.name, model=llm.MODEL, **r)
