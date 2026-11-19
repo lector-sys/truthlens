@@ -74,17 +74,22 @@
   calls (whisper: 30 s + audio length), 60 s for any later read. Each call logs `connect_s`, `ttfb_s`, `total_s`
   (client) next to `queue_s`, `load_s`, `prefill_s`, `gen_s` (server). A failure is logged as `llm_attempt_failed` with
   `network: true` and the `stage` it stalled at (connect / first byte / read), then retried once on a new connection.
-  Live (demo2 media): connect 0.06-0.14 s, first byte 1.3-8.2 s (caption vs 3 frames is the slowest), queue ≤ 0.13 s.
-  Caveat: with the 20 s limit, a call queued > 20 s behind a real job would show as "didn't respond" and be retried.
+- **Streamed Ollama + /api/ps probe** (replaces guessing from the 20 s limit): first chunk = prefill done (≤ 20 s),
+  then ≤ 10 s idle between chunks, no total cap. On any timeout the client GETs /api/ps (3 s) before retrying:
+  answers with a loaded model → verdict "busy", no answer → "network" (refused/reset → network without probing).
+  /api/ps lists loaded models and truthlens-vl stays loaded, so "busy" = reachable but slow. Live (demo2 media):
+  connect 0.07-0.16 s, first chunk 0.26-2.5 s, total 1.2-4.1 s, queue ≤ 0.16 s, no warnings. Smoke-tested against a
+  fake server: healthy 1.6 s stream with 0.5 s idle limit passes; hung chat + answering /api/ps → busy; stream that
+  stops after one chunk → "idle"; silent socket → network, retried on a new connection.
 - **c2patool 0.27.23 installed on the laptop** (official contentauth/c2pa-rs Windows release, sha256 checked against
   GitHub's digest) in `%LOCALAPPDATA%\Programs\c2patool\c2patool`, on the user PATH and as `C2PATOOL` in `.env`.
   Install steps: README *Setup -> c2patool*. The parser follows c2patool's `validation_state`: Valid = "verified ...
   signature and content hashes valid, signed by <issuer> (signer not checked against a trust list)", Trusted = "... on
   the trust list", else "failed verification (<codes>)". Tested with its test certificate (valid + one flipped byte ->
   `assertion.dataHash.mismatch`); a real ChatGPT original is still to be tested.
-- Dashboard warnings (`llm.server_warnings`), two kinds: "GPU server busy, waited X s" only when the *server* reports
-  `queue_s` > 5 s; "GPU server didn't respond (network), retried" when the client gave up (stage + seconds shown).
-  Smoke-tested with a local socket that accepts but never answers (given up at first byte, retried on a 2nd connection).
+- Dashboard warnings (`llm.server_warnings`): "GPU server busy, waited X s" when the server reports `queue_s` > 5 s;
+  "GPU server busy (running ...), timed out at <stage>, retried" when a call timed out and /api/ps answered; "GPU server
+  didn't respond (network), retried" when /api/ps didn't answer either or the connection was refused/reset.
 - No other process on the laptop calls the GPU server (checked 19:5x: only the dashboard; no connections to it).
   Consistent with the server log: this laptop is the only client.
 

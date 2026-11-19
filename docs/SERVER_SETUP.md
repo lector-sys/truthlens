@@ -10,12 +10,18 @@ TruthLens runs on the team laptop. Model calls go to the team's GPU server over 
   generating waits for it (test: a 0.5 s call took 46.6 s behind a 2,500-token generation). The dashboard shows
   "GPU server busy, waited X s" when the server reports more than 5 s of `queue_s`. If that becomes common, the server
   owner can set `OLLAMA_NUM_PARALLEL=2` (extra VRAM per slot) or keep other jobs off the server while cases run.
-- **Network stalls.** A request can also stall before it reaches the server (what caused the one 60 s timeout seen so
-  far). Each attempt uses a fresh connection with a 3 s connect timeout and a 20 s time-to-first-byte limit (whisper:
-  30 s + audio length), and is retried once. The dashboard then shows "GPU server didn't respond (network), retried".
-- **What each call logs** (case log, `llm_call`): client side `connect_s`, `ttfb_s`, `total_s`; server side `queue_s`,
-  `load_s`, `prefill_s`, `gen_s`, tokens; the image size sent. Failed attempts: `llm_attempt_failed` with `network`,
-  `stage` (connect / first byte / read) and the same client timings.
+- **Timeouts.** Ollama replies are streamed: the first chunk arrives when prefill is done (limit 20 s, covering queue
+  + load + prefill), then at most 10 s may pass between chunks; there is no cap on the total, so a long but healthy
+  generation never trips it. Whisper: 30 s + audio length to the first byte. Connect: 3 s. Every attempt uses a fresh
+  connection and a failed one is retried once.
+- **Busy or network?** On any timeout the client asks `GET /api/ps` (3 s) before retrying. If it answers with a loaded
+  model the dashboard says "GPU server busy (running ...), timed out at ..., retried"; if it doesn't answer, "GPU server
+  didn't respond (network), retried". Refused / reset connections are network. `/api/ps` lists *loaded* models and
+  this server keeps `truthlens-vl` loaded, so "busy" here really means "reachable and up, but slow".
+- **What each call logs** (case log, `llm_call`): client side `connect_s`, `ttfb_s` (Ollama: prefill done), `total_s`;
+  server side `queue_s`, `load_s`, `prefill_s`, `gen_s`, tokens; the image size sent. Failed attempts:
+  `llm_attempt_failed` with `stage` (connect / first byte / idle / read), `verdict` (busy / network), `probe` (what
+  /api/ps said) and the same client timings.
 
 ## Local tools
 c2patool (verified C2PA manifests) is installed on the laptop, not the server: see the README, *Setup → c2patool*.
