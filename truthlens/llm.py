@@ -3,7 +3,7 @@ then LLM_PROVIDERS; default ollama only): "ollama" (own GPU server, Chat Complet
 OpenAI-compatible), "openai" (Luna via the Responses API). Each reply is validated against its JSON schema locally; a bad
 or failed reply is retried once, then the next provider is tried, else None plus a "check_not_run" log entry.
 Audio goes to the whisper.cpp server at WHISPER_URL (or OpenAI transcription if that is unset), never to a chat model."""
-import base64, datetime, hashlib, io, json, os, subprocess, time, urllib.request, uuid, wave
+import base64, datetime, hashlib, http.client, io, json, os, socket, subprocess, time, urllib.request, uuid, wave
 from pathlib import Path
 from urllib.parse import urlparse
 from PIL import Image
@@ -72,13 +72,17 @@ def _log(case, action, **details):
         case.log(action, **details)
 
 
-def _image_url(path, edge=1024):
-    """Downscale to a 1024 px long edge, JPEG, data URI."""
+def _jpeg(path, edge=1024):
+    """Image as sent to a model: downscaled to a 1024 px long edge (never upscaled), JPEG q90 -> (bytes, (w, h))."""
     img = Image.open(path).convert("RGB")
     img.thumbnail((edge, edge))
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=90)
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    return buf.getvalue(), img.size
+
+
+def _image_url(path):
+    return "data:image/jpeg;base64," + base64.b64encode(_jpeg(path)[0]).decode()
 
 
 def _cache_file(*parts, files=()):
@@ -104,6 +108,8 @@ def invalid(v, schema, at="$"):
         if not isinstance(v, list):
             return f"{at} is not an array"
         return next((e for n, x in enumerate(v) if (e := invalid(x, schema.get("items", {}), f"{at}[{n}]"))), None)
+    if "enum" in schema and v not in schema["enum"]:
+        return f"{at} = {v!r} is not one of {schema['enum']}"
     ok = {"string": isinstance(v, str), "boolean": isinstance(v, bool), "integer": isinstance(v, int) and not isinstance(v, bool),
           "number": isinstance(v, (int, float)) and not isinstance(v, bool)}.get(t, True)
     return None if ok else f"{at} is not {t}"
@@ -115,8 +121,44 @@ def _format_rules(schema):
             "no other keys): " + json.dumps(schema, separators=(",", ":")))
 
 
+def _ollama(model, system, user, jpegs, schema):
+    """Ollama's native /api/chat (not its OpenAI-compatible endpoint, which reports no timings). Connect timeout 5 s,
+    read timeout 60 s. -> (parsed reply, stats incl. queue_s = server time not spent loading, reading or generating,
+    i.e. waiting behind other requests: this server runs one request at a time)."""
+    u = urlparse(OLLAMA_URL)
+    body = {"model": model, "stream": False, "format": schema,
+            "options": {"temperature": 0, "seed": SEED, "num_predict": MAX_TOKENS},
+            "messages": [{"role": "system", "content": f"{system}\n\n{_format_rules(schema)}\n\n{GUARD}"},
+                         {"role": "user", "content": user, "images": [base64.b64encode(j).decode() for j in jpegs]}]}
+    conn = (http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection)(u.hostname, u.port, timeout=5)
+    try:
+        try:
+            conn.connect()
+        except OSError as e:  # refused / unreachable / no route: not worth a retry
+            raise ConnectionError(f"connect to {u.hostname}: {e!r}") from e
+        conn.sock.settimeout(60)
+        conn.request("POST", "/api/chat", json.dumps(body), {"Content-Type": "application/json"})
+        r = conn.getresponse()
+        data = r.read()
+    finally:
+        conn.close()
+    if r.status != 200:
+        raise RuntimeError(f"ollama HTTP {r.status}: {data[:200]!r}")
+    d = json.loads(data)
+    sec = {k: d.get(f"{k}_duration", 0) / 1e9 for k in ("total", "load", "prompt_eval", "eval")}
+    stats = {"input_tokens": d.get("prompt_eval_count"), "output_tokens": d.get("eval_count"), "done_reason": d.get("done_reason"),
+             "load_s": round(sec["load"], 2), "prefill_s": round(sec["prompt_eval"], 2), "gen_s": round(sec["eval"], 2),
+             "queue_s": round(max(0.0, sec["total"] - sec["load"] - sec["prompt_eval"] - sec["eval"]), 2)}
+    return json.loads(d["message"]["content"]), stats
+
+
 def _call(provider, c, model, system, user, images, schema, name, effort):
-    """One request -> (parsed reply, (input_tokens, output_tokens))."""
+    """One request -> (parsed reply, stats: tokens, image sizes sent, and server timings where the provider gives them)."""
+    sent = [_jpeg(p) for p in images]
+    stats = {"images_px": [list(wh) for _, wh in sent], "images_kb": [round(len(j) / 1024) for j, _ in sent]} if sent else {}
+    if provider == "ollama":
+        out, st = _ollama(model, system, user, [j for j, _ in sent], schema)
+        return out, {**stats, **st}
     if provider == "openai":
         content = [{"type": "input_text", "text": user}]
         content += [{"type": "input_image", "image_url": _image_url(p), "detail": "auto"} for p in images]
@@ -124,15 +166,18 @@ def _call(provider, c, model, system, user, images, schema, name, effort):
                                input=[{"role": "user", "content": content}],
                                text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}})
         u = getattr(r, "usage", None)
-        return json.loads(r.output_text), (getattr(u, "input_tokens", None), getattr(u, "output_tokens", None))
-    content = [{"type": "text", "text": user}] + [{"type": "image_url", "image_url": {"url": _image_url(p)}} for p in images]
+        return json.loads(r.output_text), {**stats, "input_tokens": getattr(u, "input_tokens", None),
+                                           "output_tokens": getattr(u, "output_tokens", None)}
+    content = [{"type": "text", "text": user}] + [{"type": "image_url", "image_url": {
+        "url": "data:image/jpeg;base64," + base64.b64encode(j).decode()}} for j, _ in sent]
     r = c.chat.completions.create(
         model=model, temperature=0, seed=SEED, max_tokens=MAX_TOKENS,
         messages=[{"role": "system", "content": f"{system}\n\n{_format_rules(schema)}\n\n{GUARD}"},
                   {"role": "user", "content": content}],
         response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True}})
     u = getattr(r, "usage", None)
-    return json.loads(r.choices[0].message.content), (getattr(u, "prompt_tokens", None), getattr(u, "completion_tokens", None))
+    return json.loads(r.choices[0].message.content), {**stats, "input_tokens": getattr(u, "prompt_tokens", None),
+                                                      "output_tokens": getattr(u, "completion_tokens", None)}
 
 
 def _cached(f, case, **log):
@@ -153,7 +198,7 @@ def ask_json(system, user, images=(), *, schema, name, version, effort="low", ca
     """Structured reply as a dict matching `schema`, or None. Order: the cache (key: evidence bytes + prompt + prompt
     version + model, skipped when FRESH), then each provider (retried once on an invalid or failed reply), then None
     (logged "check_not_run")."""
-    from openai import APIConnectionError
+    from openai import APIConnectionError, APITimeoutError
     images = list(images)
     models = {p: (VISION_MODELS if images else TEXT_MODELS).get(p, "") for p in PROVIDERS}
     key = {p: _cache_file(name, version, m, effort, system, user, files=images) for p, m in models.items()}
@@ -169,21 +214,26 @@ def ask_json(system, user, images=(), *, schema, name, version, effort="low", ca
         model, f = models[p], key[p]
         for attempt in (1, 2):
             t0 = time.time()
+            stats = {}
             try:
-                out, (tin, tout) = _call(p, c, model, system, user, images, schema, name, effort)
+                out, stats = _call(p, c, model, system, user, images, schema, name, effort)
                 err = invalid(out, schema)
-            except APIConnectionError as e:  # unreachable: a retry won't help, go to the next provider
-                why.append(f"{p}: {e!r}"[:200])
-                break
-            except Exception as e:  # timeout, API error, refusal, unparsable JSON
+            except (ConnectionError, socket.gaierror, APIConnectionError) as e:
+                if not isinstance(e, APITimeoutError):  # unreachable: a retry won't help, go to the next provider
+                    why.append(f"{p}: {e!r}"[:200])
+                    break
+                err = repr(e)[:200]
+            except Exception as e:  # read timeout (e.g. queued behind another client), API error, unparsable JSON
                 err = repr(e)[:200]
             if err is None:
                 info = {"provider": p, "model": model, "host": host(p), "cloud": p in CLOUD}
                 _save(f, info, out)
                 _log(case, "llm_call", check=name, prompt_version=version, cached=False, effort=effort, attempt=attempt,
-                     seconds=round(time.time() - t0, 2), input_tokens=tin, output_tokens=tout, **info)
+                     seconds=round(time.time() - t0, 2), **stats, **info)
                 return out
-            why.append(f"{p} try {attempt}: {err}")
+            why.append(f"{p} try {attempt} ({time.time() - t0:.0f} s): {err}")
+            _log(case, "llm_attempt_failed", check=name, provider=p, attempt=attempt, seconds=round(time.time() - t0, 2),
+                 error=err, **stats)
     _log(case, "check_not_run", check=name, reason=("; ".join(why) or "no LLM provider configured")[:300])
     return None
 
