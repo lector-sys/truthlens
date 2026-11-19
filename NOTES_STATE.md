@@ -34,6 +34,43 @@
 - Video frames' noise/ELA fire a lot on the test-pattern videos; expect calibration on real video to down-weight or not.
 - Whisper runs ~1.1× real time on this server; if that's too slow for live use, check it's on the GPU or use `small`.
 
+## AI-generated images + coverage honesty (2026-11-19)
+- **Labels** are now "No significant / Weak / Moderate / Strong indicators of manipulation or synthetic generation".
+  No analyzer ran → **"Not analysed: <why>"** (grey, no gauge). Checks skipped and nothing found → **"Limited analysis: no
+  significant indicators"**. Overview and report show "Checks run: X of Y. Not run: ... (why)" (`pipeline.coverage`,
+  recomputed from the log on load, so old cases relabel too: case_20261119_190051 now says Not analysed).
+- Findings are grouped **Edited / Generated / Context** (`fusion.group`) on the Evidence and Findings screens and in the report.
+- Formats: `.avif .heic .heif .jxl .jp2 .gif` route to the image analyzer. Pillow 13 reads AVIF; anything it can't read is
+  converted by ffmpeg to `artifacts/{stem}.png` (`media_meta.readable_image`, logged as `converted` with its sha256).
+  The evidence hash stays the original's; EXIF is reported "not run"; ELA carries a conversion note.
+- New A-types: `synthetic_provenance` (byte scan for C2PA/JUMBF, XMP DigitalSourceType, generator names; c2patool used if on
+  PATH, not installed here → "C2PA manifest present (not verified)"), `spectral_upsampling` (residual FFT: off-centre peaks
+  + Nyquist-tail ratio; untouched 0.85-6, 2x upsampled 0.02-0.22; `{stem}_spectrum.png`), `synthetic_visual_artifacts`
+  (truthlens-vl lists located artifacts, 0-1000 boxes converted to pixels; violet overlay in the viewer; on a test sign
+  with garbled text it boxed it within 15 px).
+- Test set: `generator` column; `ai_generated` rows need it; calibrate warns below 15 rows / 3 generators and flags files
+  under 768 px as likely thumbnails. 6 `ph_img_ai_*` placeholders (XMP tag, SD parameters chunk, 2x upsampled).
+- Calibration (SYNTHETIC, n=41): synthetic_provenance 0.53, spectral_upsampling 0.41; `synthetic_visual_artifacts` never
+  fired on the abstract placeholders, so it has no measured weight (falls back to reliability low = 0.3). Held-out caught
+  6/10, false alarms 0/6. Real generator output is needed before any of these numbers mean anything.
+- Fresh re-runs of the two uploads (new cases `*_fresh`, originals kept for custody): both "Limited analysis: no
+  significant indicators", 2 of 5 checks (no caption); provenance: nothing; spectral: tail 1.23 / 0.92, no peaks;
+  visual artifacts: none listed; only exif_missing (0.20).
+- llm: timeouts are now retried once (APITimeoutError subclasses APIConnectionError, which skips straight to the next provider).
+- **Uncalibrated = not counted**: once calibration.json exists, a type it has no weight for gets weight 0 and its findings
+  say "uncalibrated (not counted in label)" (cards, Findings table, report). Today that is `synthetic_visual_artifacts`
+  (never fired on placeholders) and `exif_missing` (0.20 < the 0.25 firing threshold). No calibration file at all →
+  reliability defaults, as before.
+- **60 s timeout on the .avif call, root cause**: the GPU server runs `truthlens-vl` one request at a time; the call
+  queued behind another client's generation (both it and the next call waited > 60 s, so the server was busy ≥ 2 min;
+  this laptop's calls were sequential). Not the image (sent 600x400, 56 KB, 1,552 prompt tokens; 1024 px cap already
+  applies after conversion) and not output length (7 tokens; idle 0.5-3 s). Reproduced: 0.5 s call → 46.6 s behind a
+  2,500-token generation. Fix: Ollama now goes through its native /api/chat so every call logs `queue_s`, `load_s`,
+  `prefill_s`, `gen_s`, tokens and image size; failed attempts log `llm_attempt_failed`; artifact list capped at 5
+  (prompt v2) within the 300-token cap; one retry kept. Server-side options are in `docs/SERVER_SETUP.md` (not applied).
+- `c2patool` is not installed here; `docs/SERVER_SETUP.md` has install steps for the official release (v0.27.23). The
+  c2patool output parser is untested against a real manifest.
+
 ## Module map
 | File | Role |
 |---|---|
@@ -43,7 +80,7 @@
 | `truthlens/analyzers/{image,video,audio,text}.py` | per-medium detectors, each `analyze(path, case) -> list[Indicator]` |
 | `truthlens/crossmodal.py` | A/V time linking, caption↔image/frames, claimed date↔metadata, quote↔transcript |
 | `truthlens/fusion.py` | noisy-OR over strongest indicator per (file, type), weights from `calibration.json` / reliability |
-| `truthlens/llm.py` | the only model caller: Ollama/Groq (Chat Completions) or Luna (Responses), local schema check, retry, provider fallback, cache; whisper.cpp transcripts; `provenance()`, `ping()` |
+| `truthlens/llm.py` | the only model caller: Ollama (native /api/chat, per-call timings), Groq (Chat Completions) or Luna (Responses), local schema check, retry, provider fallback, cache; whisper.cpp transcripts; `provenance()`, `source()`, `ping()` |
 | `truthlens/report.py` | self-contained HTML report |
 | `calibrate.py` | labelled test set → per-type precision (Wilson CI), held-out case metrics, `calibration.json` |
 | `testset/make_placeholder.py` | synthetic stand-in media |

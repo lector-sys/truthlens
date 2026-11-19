@@ -79,7 +79,8 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
 4. **Evidence is read-only.** Never write, move, re-save or modify files from `case.evidence()`. Write only to
    `case.artifact_path(...)`.
 5. **LLM usage:** only through `truthlens/llm.py`. Never ask the LLM "is this fake / AI-generated / manipulated?".
-   Use it only for meaning: extracting claims, comparing caption ↔ image/frames, summarising existing indicators.
+   Use it only for meaning: extracting claims, comparing caption ↔ image/frames, summarising existing indicators, and
+   listing concrete, locatable visual artifacts with boxes (`synthetic_visual_artifacts`; never an overall verdict).
    Never send audio to Luna (it can't take audio); audio goes through `llm.transcribe` only. If `llm` returns
    `None`, return `[]`; never crash.
 6. **Never crash the pipeline:** catch expected failures (no audio stream, unreadable file, ffmpeg error) and
@@ -99,13 +100,14 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
 
 | Owner | types |
 |---|---|
-| A | `exif_missing` `exif_edit_software` `ela_hotspot` `noise_inconsistency` `copy_move` `reencoded` `no_creation_time` `temporal_spike` `face_texture_jump` |
+| A | `exif_missing` `exif_edit_software` `ela_hotspot` `noise_inconsistency` `copy_move` `reencoded` `no_creation_time` `temporal_spike` `face_texture_jump` `synthetic_provenance` `spectral_upsampling` `synthetic_visual_artifacts` |
 | B | `reencoded` `audio_splice` `audio_click` `uniform_pauses` |
 | C | `text_inconsistency` `av_aligned_flags` `caption_image_mismatch` `caption_frame_mismatch` `claim_date_mismatch` `quote_not_in_transcript` `image_matches_frame` |
 
 **Artifact filenames** (always via `case.artifact_path(...)`; `{stem}` = evidence filename without extension):
 `{stem}_ela.png` `{stem}_noise.png` `{stem}_copymove.png` `{stem}_f0001.jpg…` (sampled frames)
-`{stem}_spike_{frame}.jpg` `{stem}_16k.wav` `{stem}_spec.png` `{stem}_transcript.json`
+`{stem}_spike_{frame}.jpg` `{stem}_16k.wav` `{stem}_spec.png` `{stem}_transcript.json` `{stem}_spectrum.png`
+`{stem}.png` (PNG copy of an image format Pillow can't read, made by `media_meta.readable_image`)
 
 ## 6. How an AI assistant must answer
 
