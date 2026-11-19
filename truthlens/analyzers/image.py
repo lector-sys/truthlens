@@ -13,7 +13,9 @@ from .media_meta import readable_image
 EDIT_SOFTWARE = ("photoshop", "gimp", "lightroom", "snapseed", "canva", "picsart")
 GENERATORS = ("midjourney", "dall-e", "dall·e", "dalle", "stable diffusion", "stablediffusion", "sdxl", "comfyui",
               "automatic1111", "novelai", "firefly", "imagen", "gemini", "flux", "leonardo", "ideogram", "chatgpt", "openai",
-              "sora", "runway", "nano banana", "grok", "kandinsky", "dreamstudio", "bing image creator", "copilot designer")
+              "sora", "runway", "nano banana", "grok", "kandinsky", "dreamstudio", "bing image creator", "copilot designer",
+              "elevenlabs", "eleven labs", "suno", "udio", "resemble.ai", "resemble ai", "murf", "playht", "play.ht")
+# a name counts only if no letter precedes it: "udio" must not match "audio" (in every audio C2PA manifest)
 CONVERTED_NOTE = "Analysed a PNG converted from {ext}: compression-based checks (ELA) see the conversion, not the original file"
 
 
@@ -217,7 +219,7 @@ def synthetic_provenance(path, case):
         gen, status, types = "", "C2PA manifest present (not verified)", ""
     meta = _metadata_text(data, img)
     types += " " + " ".join(re.findall(r"digitalsourcetype\W{0,60}?(?:[\w:./-]*/)?(\w*algorithmicmedia|compositesynthetic)", meta))
-    names = sorted({g for g in GENERATORS if g in meta or g in gen.lower()})
+    names = sorted({g for g in GENERATORS if re.search(r"(?<![a-z])" + re.escape(g), meta + " " + gen.lower())})
     case.log("provenance_scan", file=path.name, c2pa=c2pa, c2pa_status=status if c2pa else None, generators=names)
     found, score = [], 0.0
     if "compositewithtrainedalgorithmicmedia" in types or "compositesynthetic" in types:

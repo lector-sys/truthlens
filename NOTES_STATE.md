@@ -149,6 +149,9 @@
 - First cross-area edit: `image.synthetic_provenance` says "names an AI image / video / audio generator" by the
   evidence's media (`fusion.media`). Audio files get the provenance check from `pipeline.py` (.wav/.mp3/.m4a/.flac,
   what c2patool 0.27 signs); `synthetic_provenance/audio` has no weight, so it only shows (banner + finding).
+- **Freeze exception (approved)**: AI voice/audio tool names added to `image.GENERATORS` (ElevenLabs, Suno, Udio,
+  Resemble AI, Murf, PlayHT). A name now counts only if no letter precedes it ("udio" would match "audio" in every
+  audio C2PA manifest). Provenance results on all 47 test-set files are unchanged; no weight or threshold changed.
 
 ## Module map
 | File | Role |

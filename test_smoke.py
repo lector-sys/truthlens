@@ -193,6 +193,11 @@ try:
         g = case.artifact_path("gen" + ext)
         g.write_bytes(b"\0" * 64 + b"<x:xmpmeta><xmp:CreatorTool>OpenAI</xmp:CreatorTool></x:xmpmeta>")
         assert f"names an AI {kind} generator: openai" in image.synthetic_provenance(g, case)[0].explanation
+    g = case.artifact_path("voice.wav")  # voice tools, any case; "audio/wav" must not read as Udio
+    g.write_bytes(b"<x:xmpmeta><dc:format>audio/wav</dc:format><xmp:CreatorTool>ElevenLabs + SUNO</xmp:CreatorTool></x:xmpmeta>")
+    assert "names an AI audio generator: elevenlabs, suno." in image.synthetic_provenance(g, case)[0].explanation
+    g.write_bytes(b"<x:xmpmeta><dc:format>audio/wav</dc:format></x:xmpmeta>")
+    assert image.synthetic_provenance(g, case) == []
     exe = os.getenv("C2PATOOL") or shutil.which("c2patool")
     if exe:  # sign with c2patool's built-in test certificate: verified when intact, failed once one byte changes
         man = case.artifact_path("c2pa_manifest.json")
