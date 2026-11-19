@@ -1,0 +1,5 @@
+cases/
+__pycache__/
+.venv/
+testset/media/
+.env

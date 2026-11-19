@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TruthLens build flowchart</title>
+<style>
+  :root { --fg: #1c1917; --bg: #fafaf9; --muted: #57534e; --acc: #c2410c; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e7e5e4; --bg: #1c1917; --muted: #a8a29e; --acc: #fb923c; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 1140px; margin: 0 auto; padding: 24px 20px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 40px 0 8px; }
+  p.lede { color: var(--muted); margin: 0 0 20px; }
+  figure { margin: 0; }
+  figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  svg { width: 100%; height: auto; display: block; color: var(--fg); }
+  svg text { fill: currentColor; font: 12px system-ui, sans-serif; }
+  svg .b { font-weight: 600; font-size: 13px; }
+  svg .s { font-size: 11px; fill: var(--muted); }
+  svg .acc { stroke: var(--acc); }
+  svg .accf { fill: var(--acc); }
+  svg text.acct { fill: var(--acc); }
+  svg .box { fill: none; stroke: currentColor; stroke-width: 1.3; }
+  svg .ln { stroke: currentColor; stroke-width: 1.3; fill: none; }
+  svg .dash { stroke-dasharray: 5 4; }
+  svg .grid { stroke: currentColor; stroke-opacity: .18; }
+  svg .bar { fill: currentColor; fill-opacity: .07; stroke: currentColor; stroke-opacity: .5; }
+</style>
+</head>
+<body>
+<main>
+<h1>TruthLens: build flowchart</h1>
+<p class="lede">Path from upload to report, matching the scaffold in <code>C:\Users\meyaa\truthlens</code>. ✓ = working in the scaffold now, ○ = still to build.</p>
+
+<figure>
+<svg viewBox="0 0 1100 1060" role="img" aria-label="Flow: evidence and context are uploaded, hashed into the vault, routed to image, video, audio and text analyzers, merged into an Indicator list, cross-checked across modalities, fused into a label, and shown in the review UI and HTML report. Luna and whisper-1 are called for text claims, caption checks and transcripts; every step is written to the case log.">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="currentColor"/></marker>
+    <marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="accf" d="M0,0L10,5L0,10z"/></marker>
+  </defs>
+
+  <!-- legend -->
+  <text x="870" y="30" class="s">✓ working now   ○ to build</text>
+  <line x1="870" y1="46" x2="905" y2="46" class="ln acc" marker-end="url(#o)"/><text x="912" y="50" class="s">OpenAI API call</text>
+  <line x1="870" y1="64" x2="905" y2="64" class="ln dash" marker-end="url(#a)"/><text x="912" y="68" class="s">logging / side data</text>
+
+  <!-- inputs -->
+  <rect x="300" y="20" width="220" height="50" rx="6" class="box"/>
+  <text x="410" y="41" text-anchor="middle" class="b">Evidence files</text>
+  <text x="410" y="59" text-anchor="middle" class="s">image · video · audio</text>
+  <rect x="580" y="20" width="220" height="50" rx="6" class="box"/>
+  <text x="690" y="41" text-anchor="middle" class="b">Context text</text>
+  <text x="690" y="59" text-anchor="middle" class="s">caption · claimed date/place · quotes</text>
+  <line x1="410" y1="70" x2="460" y2="110" class="ln" marker-end="url(#a)"/>
+  <line x1="690" y1="70" x2="640" y2="110" class="ln" marker-end="url(#a)"/>
+
+  <!-- app / vault / pipeline -->
+  <rect x="380" y="110" width="340" height="44" rx="6" class="box"/>
+  <text x="550" y="137" text-anchor="middle" class="b">app.py · Streamlit upload</text>
+  <line x1="550" y1="154" x2="550" y2="190" class="ln" marker-end="url(#a)"/>
+
+  <rect x="380" y="190" width="340" height="60" rx="6" class="box"/>
+  <text x="550" y="214" text-anchor="middle" class="b">vault.py · Evidence vault</text>
+  <text x="550" y="234" text-anchor="middle" class="s">SHA-256 on ingest · read-only copy · never modified</text>
+  <line x1="550" y1="250" x2="550" y2="290" class="ln" marker-end="url(#a)"/>
+
+  <rect x="380" y="290" width="340" height="44" rx="6" class="box"/>
+  <text x="550" y="317" text-anchor="middle" class="b">pipeline.py · route by file type</text>
+
+  <!-- fan out -->
+  <polyline points="550,334 550,357" class="ln"/>
+  <line x1="145" y1="357" x2="955" y2="357" class="ln"/>
+  <line x1="145" y1="357" x2="145" y2="380" class="ln" marker-end="url(#a)"/>
+  <line x1="415" y1="357" x2="415" y2="380" class="ln" marker-end="url(#a)"/>
+  <line x1="685" y1="357" x2="685" y2="380" class="ln" marker-end="url(#a)"/>
+  <line x1="955" y1="357" x2="955" y2="380" class="ln" marker-end="url(#a)"/>
+  <text x="151" y="374" class="s">.jpg .png .webp</text>
+  <text x="421" y="374" class="s">.mp4 .mov .mkv</text>
+  <text x="691" y="374" class="s">.wav .mp3 .m4a</text>
+  <text x="961" y="374" class="s">context text</text>
+
+  <!-- analyzers -->
+  <rect x="30" y="380" width="230" height="150" rx="6" class="box"/>
+  <text x="145" y="402" text-anchor="middle" class="b">Image</text>
+  <text x="145" y="420" text-anchor="middle" class="s">Owner A · CPU</text>
+  <text x="44" y="446">✓ EXIF metadata</text>
+  <text x="44" y="464">✓ ELA heatmap + region box</text>
+  <text x="44" y="482">○ noise-level map</text>
+  <text x="44" y="500">○ copy-move (ORB keypoints)</text>
+  <text x="44" y="518">○ AI-look check (low weight)</text>
+
+  <rect x="300" y="380" width="230" height="150" rx="6" class="box"/>
+  <text x="415" y="402" text-anchor="middle" class="b">Video</text>
+  <text x="415" y="420" text-anchor="middle" class="s">Owner A · CPU</text>
+  <text x="314" y="446">✓ ffprobe metadata</text>
+  <text x="314" y="464">○ sample frames → Image</text>
+  <text x="314" y="482">○ scene cuts</text>
+  <text x="314" y="500">○ optical-flow spikes</text>
+  <text x="314" y="518">○ face-crop consistency</text>
+
+  <rect x="570" y="380" width="230" height="150" rx="6" class="box"/>
+  <text x="685" y="402" text-anchor="middle" class="b">Audio</text>
+  <text x="685" y="420" text-anchor="middle" class="s">Owner B · CPU + API</text>
+  <text x="584" y="446">✓ ffprobe metadata</text>
+  <text x="584" y="464">○ transcript (whisper-1)</text>
+  <text x="584" y="482">○ splice detection (librosa)</text>
+  <text x="584" y="500">○ prosody features</text>
+
+  <rect x="840" y="380" width="230" height="150" rx="6" class="box acc"/>
+  <text x="955" y="402" text-anchor="middle" class="b">Context text</text>
+  <text x="955" y="420" text-anchor="middle" class="s">Owner C · Luna</text>
+  <text x="854" y="446">✓ claim extraction</text>
+  <text x="854" y="464">✓ self-contradictions</text>
+  <text x="854" y="482">✓ regex fallback offline</text>
+
+  <!-- merge -->
+  <line x1="145" y1="530" x2="145" y2="555" class="ln"/>
+  <line x1="415" y1="530" x2="415" y2="555" class="ln"/>
+  <line x1="685" y1="530" x2="685" y2="555" class="ln"/>
+  <line x1="955" y1="530" x2="955" y2="555" class="ln"/>
+  <line x1="145" y1="555" x2="955" y2="555" class="ln"/>
+  <line x1="550" y1="555" x2="550" y2="580" class="ln" marker-end="url(#a)"/>
+  <text x="558" y="573" class="s">each returns list[Indicator]</text>
+
+  <rect x="380" y="580" width="340" height="54" rx="6" class="box"/>
+  <text x="550" y="602" text-anchor="middle" class="b">Indicator list · indicator.py</text>
+  <text x="550" y="622" text-anchor="middle" class="s">location · score · reliability · why · alternatives</text>
+  <line x1="550" y1="634" x2="550" y2="670" class="ln" marker-end="url(#a)"/>
+
+  <!-- cross-modal -->
+  <rect x="330" y="670" width="440" height="145" rx="6" class="box"/>
+  <text x="550" y="692" text-anchor="middle" class="b">crossmodal.py · Cross-modal checks</text>
+  <text x="550" y="710" text-anchor="middle" class="s">Owner C</text>
+  <text x="344" y="732">✓ video + audio flags within ±0.5s → linked</text>
+  <text x="344" y="750">✓ caption ↔ image (Luna vision)</text>
+  <text x="344" y="768">○ claimed date/place ↔ EXIF / ffprobe</text>
+  <text x="344" y="786">○ quote ↔ transcript</text>
+  <text x="344" y="804">○ lip-sync: mouth motion ↔ audio energy (stretch)</text>
+  <line x1="550" y1="815" x2="550" y2="850" class="ln" marker-end="url(#a)"/>
+  <text x="558" y="838" class="s">+ linked indicators</text>
+
+  <!-- OpenAI API -->
+  <rect x="860" y="660" width="210" height="92" rx="6" class="box acc"/>
+  <text x="965" y="684" text-anchor="middle" class="b acct">OpenAI API</text>
+  <text x="965" y="704" text-anchor="middle">Luna (TRUTHLENS_MODEL)</text>
+  <text x="965" y="722" text-anchor="middle">whisper-1 transcription</text>
+  <text x="965" y="740" text-anchor="middle" class="s">skipped when no API key</text>
+  <line x1="1030" y1="530" x2="1030" y2="660" class="ln acc" marker-end="url(#o)"/>
+  <text x="1036" y="600" class="s">claims</text>
+  <line x1="780" y1="530" x2="880" y2="660" class="ln acc" marker-end="url(#o)"/>
+  <text x="838" y="625" text-anchor="end" class="s">audio file</text>
+  <line x1="770" y1="740" x2="860" y2="740" class="ln acc" marker-end="url(#o)"/>
+  <text x="815" y="732" text-anchor="middle" class="s">caption+image</text>
+
+  <!-- case log -->
+  <rect x="30" y="670" width="230" height="70" rx="6" class="box"/>
+  <text x="145" y="694" text-anchor="middle" class="b">cases/&lt;id&gt;/log.jsonl</text>
+  <text x="145" y="714" text-anchor="middle" class="s">append-only: every step, tool, error</text>
+  <polyline points="380,220 15,220 15,705 30,705" class="ln dash" marker-end="url(#a)"/>
+  <text x="200" y="212" text-anchor="middle" class="s">hashes + every step logged</text>
+
+  <!-- fusion -->
+  <rect x="380" y="850" width="340" height="60" rx="6" class="box"/>
+  <text x="550" y="874" text-anchor="middle" class="b">fusion.py · noisy-OR × reliability</text>
+  <text x="550" y="894" text-anchor="middle" class="s">→ No / Weak / Moderate / Strong indicators (never "fake")</text>
+  <line x1="480" y1="910" x2="400" y2="960" class="ln" marker-end="url(#a)"/>
+  <line x1="620" y1="910" x2="700" y2="960" class="ln" marker-end="url(#a)"/>
+
+  <!-- outputs -->
+  <rect x="250" y="960" width="260" height="56" rx="6" class="box"/>
+  <text x="380" y="984" text-anchor="middle" class="b">Review UI · app.py</text>
+  <text x="380" y="1002" text-anchor="middle" class="s">heatmaps · timeline · per-file flags</text>
+  <rect x="590" y="960" width="260" height="56" rx="6" class="box"/>
+  <text x="720" y="984" text-anchor="middle" class="b">HTML report · report.py</text>
+  <text x="720" y="1002" text-anchor="middle" class="s">flags · limitations · hashes · log</text>
+  <polyline points="145,740 145,1040 720,1040 720,1016" class="ln dash" marker-end="url(#a)"/>
+  <text x="430" y="1034" text-anchor="middle" class="s">log + integrity re-check (vault.verify)</text>
+</svg>
+<figcaption>Runtime flow. Forensic signals stay on CPU; Luna only handles meaning (claims, caption ↔ image) and is never asked whether media is fake. With no API key the orange calls are skipped and the rest still runs.</figcaption>
+</figure>
+
+<h2>24-hour build plan</h2>
+<figure>
+<svg viewBox="0 0 1100 290" role="img" aria-label="24-hour timeline: one hour of shared planning, then owners A to D build in parallel from hour 1 to 16, then everyone integrates and calibrates until hour 19, polishes until 21, freezes and rehearses until 23, with a one-hour buffer.">
+  <!-- hour axis -->
+  <g text-anchor="middle" class="s">
+    <text x="120" y="24" class="s">0h</text><text x="160" y="24" class="s">1</text><text x="360" y="24" class="s">6</text>
+    <text x="600" y="24" class="s">12</text><text x="760" y="24" class="s">16</text><text x="880" y="24" class="s">19</text>
+    <text x="960" y="24" class="s">21</text><text x="1040" y="24" class="s">23</text><text x="1080" y="24" class="s">24</text>
+  </g>
+  <g class="grid">
+    <line x1="120" y1="32" x2="120" y2="276"/><line x1="160" y1="32" x2="160" y2="276"/><line x1="360" y1="32" x2="360" y2="276"/>
+    <line x1="600" y1="32" x2="600" y2="276"/><line x1="760" y1="32" x2="760" y2="276"/><line x1="880" y1="32" x2="880" y2="276"/>
+    <line x1="960" y1="32" x2="960" y2="276"/><line x1="1040" y1="32" x2="1040" y2="276"/><line x1="1080" y1="32" x2="1080" y2="276"/>
+  </g>
+
+  <!-- lane labels -->
+  <text x="10" y="62" class="b">Owner A</text><text x="10" y="78" class="s">image + video</text>
+  <text x="10" y="122" class="b">Owner B</text><text x="10" y="138" class="s">audio</text>
+  <text x="10" y="182" class="b">Owner C</text><text x="10" y="198" class="s">text + cross-modal</text>
+  <text x="10" y="242" class="b">Owner D</text><text x="10" y="258" class="s">fusion · UI · report</text>
+
+  <!-- shared phases -->
+  <rect x="122" y="40" width="36" height="230" rx="4" class="bar"/>
+  <text x="140" y="160" text-anchor="middle" class="s">Plan</text>
+  <rect x="762" y="40" width="116" height="230" rx="4" class="bar"/>
+  <text x="820" y="146" text-anchor="middle" class="b">Integrate</text>
+  <text x="820" y="164" text-anchor="middle">+ calibrate on</text>
+  <text x="820" y="180" text-anchor="middle">labelled set</text>
+  <rect x="882" y="40" width="76" height="230" rx="4" class="bar"/>
+  <text x="920" y="152" text-anchor="middle">Stretch</text><text x="920" y="168" text-anchor="middle">+ polish</text>
+  <rect x="962" y="40" width="76" height="230" rx="4" class="bar"/>
+  <text x="1000" y="144" text-anchor="middle" class="b">Freeze</text><text x="1000" y="162" text-anchor="middle">rehearse</text>
+  <text x="1000" y="178" text-anchor="middle" class="s">backup video</text>
+  <rect x="1042" y="40" width="36" height="230" rx="4" class="bar"/>
+  <text x="1060" y="160" text-anchor="middle" class="s">Buffer</text>
+
+  <!-- lane bars: 1-6, 6-12, 12-16 -->
+  <g text-anchor="middle">
+    <rect x="162" y="40" width="196" height="50" rx="4" class="bar"/><text x="260" y="61">EXIF · ELA ✓</text><text x="260" y="79" class="s">noise map · copy-move</text>
+    <rect x="362" y="40" width="236" height="50" rx="4" class="bar"/><text x="480" y="61">frame sampling</text><text x="480" y="79" class="s">scene cuts</text>
+    <rect x="602" y="40" width="156" height="50" rx="4" class="bar"/><text x="680" y="61">optical flow</text><text x="680" y="79" class="s">face consistency</text>
+
+    <rect x="162" y="100" width="196" height="50" rx="4" class="bar"/><text x="260" y="121">metadata ✓ · transcript</text><text x="260" y="139" class="s">splice detection</text>
+    <rect x="362" y="100" width="236" height="50" rx="4" class="bar"/><text x="480" y="121">prosody features</text><text x="480" y="139" class="s">per-segment scoring</text>
+    <rect x="602" y="100" width="156" height="50" rx="4" class="bar"/><text x="680" y="121">tune thresholds</text><text x="680" y="139" class="s">on labelled clips</text>
+
+    <rect x="162" y="160" width="196" height="50" rx="4" class="bar"/><text x="260" y="181">claims ✓ · caption ✓</text><text x="260" y="199" class="s">date/place ↔ EXIF</text>
+    <rect x="362" y="160" width="236" height="50" rx="4" class="bar"/><text x="480" y="181">quote ↔ transcript</text><text x="480" y="199" class="s">caption ↔ video frames</text>
+    <rect x="602" y="160" width="156" height="50" rx="4" class="bar"/><text x="680" y="181">image ↔ frame (phash)</text><text x="680" y="199" class="s">lip-sync (stretch)</text>
+
+    <rect x="162" y="220" width="196" height="50" rx="4" class="bar"/><text x="260" y="241">labelled test set</text><text x="260" y="259" class="s">per-modality UI views</text>
+    <rect x="362" y="220" width="236" height="50" rx="4" class="bar"/><text x="480" y="241">fusion weights</text><text x="480" y="259" class="s">report layout + artifacts</text>
+    <rect x="602" y="220" width="156" height="50" rx="4" class="bar"/><text x="680" y="241">LLM summary</text><text x="680" y="259" class="s">PDF export</text>
+  </g>
+</svg>
+<figcaption>Owners work in parallel from hour 1 to 16 against the shared Indicator schema; hours 16–24 are whole-team. If behind, cut in this order: lip-sync → phash → prosody → AI-look check. Never cut: vault, one heatmap per modality, two cross-modal checks, limitations, report.</figcaption>
+</figure>
+</main>
+</body>
+</html>
