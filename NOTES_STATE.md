@@ -1,16 +1,38 @@
 # NOTES_STATE: where the build stands (D's working notes)
 
+**Blocked on the real test set: semantic weights are 0 on synthetic data. Demo cases must use real photos and clips.**
+
 ## Waiting on (blocked, everything else is built)
 - **Real test set**: `testset/media/` has only synthetic `ph_*` files. Calibration numbers are stamped SYNTHETIC until real rows land.
-- **API key**: `OPENAI_API_KEY` not set on D's machine, so Luna checks (caption↔image, caption↔frames, quote↔transcript, summary)
-  have only been run against a mocked client. Confirm the Luna model id for `TRUTHLENS_MODEL`.
+- Nothing else: semantic checks and transcripts now run on D's own GPU server (see below).
 
-## Status (2026-11-19, all phases built)
-- Phases 0-5 done and committed; `python test_smoke.py` OK (A/B/C detectors, mocked Luna, prompt injection, wording grep).
-- Demo cases on placeholders: demo1 **Moderate** (Strong expected once caption↔image runs with a key), demo2 **Strong** with
-  `av_aligned_flags` (picture jump 4.8 s ↔ audio splice 5.0 s), demo3 **No significant indicators**.
-- `calibration.json` is from the SYNTHETIC set (git-ignored; re-run `python calibrate.py` on real media).
+## Status (2026-11-19, GPU server connected)
+- **Models run on `aprameya`** (home GPU server, reached over Tailscale): Ollama `truthlens-vl` (qwen3-vl 8B Q4_K_M) for
+  claims / caption↔image / caption↔frames / summary; whisper.cpp server (large-v3-turbo) for transcripts. Set in `.env`
+  (git-ignored, see `.env.example`). Provider order `LLM_PROVIDER`, then `LLM_PROVIDERS`; default **ollama only**.
+  Groq/OpenAI run only if listed there (AGENTS §4.3: evidence goes to a cloud provider only if the user enables it).
+  **Cache first** (key: evidence bytes + prompt + prompt version + model); then each provider, schema-checked locally and
+  retried once; then "not run". `demo.py --fresh` / dashboard "Analyze fresh" bypass the cache. Case record, Overview and
+  report say "live" or "result from cache (date)".
+- Whisper gets only the 16 kHz mono audio as FLAC plus fixed options; caption/claim text is never sent (smoke-tested).
+- Report + Overview state provider/host and "Evidence stayed on the investigator's own machines (no cloud AI used)"
+  only when no cloud provider was used. Header pill pings `/api/tags` at load and every 30 s: green = this case used the
+  primary provider, amber = a fallback answered for this case, grey = server offline.
+- `python demo.py --prewarm`: 38/38 cases (3 demo + 35 testset) fully cached (6 min live; a cached re-run of the 3 demos takes 2 s). `--offline` serves from cache/.
+- Demo cases against truthlens-vl (per-stage seconds, warm model):
+  | Case | Before (no model) | Now, calibrated | Run time |
+  |---|---|---|---|
+  | demo1 | Moderate | **Moderate** 0.70 (claim_date_mismatch, exif_edit_software, noise); caption_image_mismatch fires 0.99 but weight 0.0 | image 0.2 · text 2.0 · cross 2.4 · total 6.5 |
+  | demo2 | Strong | **Strong** 0.97 (audio_splice, temporal_spike, av_aligned_flags); quote_not_in_transcript 0.58 | video 0.3 · audio 9.2 (whisper 9.1 for 8 s) · text 1.3 · cross 8.5 · total 23.4 |
+  | demo3 | No significant | **No significant** 0.03; caption_image_mismatch fires 0.99 but weight 0.0 | image 0.1 · text 1.2 · cross 4.3 · total 8.0 |
+- Uncalibrated, demo1 went Strong (0.88) and demo3 Moderate (0.60) on caption_image_mismatch: the placeholder images are
+  abstract squares, so "not a library" is a correct observation on *every* placeholder. Calibration on the SYNTHETIC set
+  therefore gives the semantic types ~0 weight (caption_image 0.0, caption_frame 0.04, quote 0.18: the placeholder audio
+  is tones, transcribed as "*crickets*"). Expect usable weights only once real media replaces `ph_*`.
+- `calibration.json` re-fit with truthlens-vl (SYNTHETIC, n=35, held-out caught 4/8, false alarms 1/6).
+- `python test_smoke.py` OK (now also: schema-invalid reply retried, provider down → cache, whisper request has no caption).
 - Video frames' noise/ELA fire a lot on the test-pattern videos; expect calibration on real video to down-weight or not.
+- Whisper runs ~1.1× real time on this server; if that's too slow for live use, check it's on the GPU or use `small`.
 
 ## Module map
 | File | Role |
@@ -21,7 +43,7 @@
 | `truthlens/analyzers/{image,video,audio,text}.py` | per-medium detectors, each `analyze(path, case) -> list[Indicator]` |
 | `truthlens/crossmodal.py` | A/V time linking, caption↔image/frames, claimed date↔metadata, quote↔transcript |
 | `truthlens/fusion.py` | noisy-OR over strongest indicator per (file, type), weights from `calibration.json` / reliability |
-| `truthlens/llm.py` | the only OpenAI caller: Responses API + JSON schema, disk cache, transcription |
+| `truthlens/llm.py` | the only model caller: Ollama/Groq (Chat Completions) or Luna (Responses), local schema check, retry, provider fallback, cache; whisper.cpp transcripts; `provenance()`, `ping()` |
 | `truthlens/report.py` | self-contained HTML report |
 | `calibrate.py` | labelled test set → per-type precision (Wilson CI), held-out case metrics, `calibration.json` |
 | `testset/make_placeholder.py` | synthetic stand-in media |
