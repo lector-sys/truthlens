@@ -4,7 +4,7 @@
  "n_calibration": 27,
  "n_held_out": 17,
  "date": "2026-11-20",
- "git": "e5eb66e",
+ "git": "68b6dc2",
  "excluded_smoke_only": [
   "ph_aud_clone_01.wav",
   "ph_aud_clone_02.wav",
@@ -218,60 +218,6 @@
    ],
    "weight": 0.19
   },
-  "learned_synthetic_audio/audio": {
-   "hits": 196,
-   "false_alarms": 28,
-   "n_manipulated": 227,
-   "n_untouched": 368,
-   "precision": [
-    0.875,
-    0.8252705970969836,
-    0.9120837754144455
-   ],
-   "hit_rate": [
-    0.8634361233480177,
-    0.8126791442062029,
-    0.9020967020883992
-   ],
-   "weight": 0.82,
-   "sources": "public_test + own calibration split"
-  },
-  "learned_synthetic_image/image": {
-   "hits": 304,
-   "false_alarms": 16,
-   "n_manipulated": 427,
-   "n_untouched": 442,
-   "precision": [
-    0.95,
-    0.920331421287444,
-    0.9689922480620154
-   ],
-   "hit_rate": [
-    0.711943793911007,
-    0.6672501879584154,
-    0.7528578053272841
-   ],
-   "weight": 0.85,
-   "sources": "public_test + own calibration split"
-  },
-  "learned_synthetic_video/video": {
-   "hits": 76,
-   "false_alarms": 4,
-   "n_manipulated": 91,
-   "n_untouched": 70,
-   "precision": [
-    0.95,
-    0.878375474489178,
-    0.9803867628727044
-   ],
-   "hit_rate": [
-    0.8351648351648352,
-    0.7456910843906761,
-    0.8974865929154849
-   ],
-   "weight": 0.82,
-   "sources": "public_test + own calibration split"
-  },
   "noise_inconsistency/image": {
    "hits": 2,
    "false_alarms": 0,
@@ -422,9 +368,6 @@
   "ela_hotspot/image": 0.02,
   "ela_hotspot/video": 0.06,
   "exif_edit_software/image": 0.19,
-  "learned_synthetic_audio/audio": 0.82,
-  "learned_synthetic_image/image": 0.85,
-  "learned_synthetic_video/video": 0.82,
   "noise_inconsistency/image": 0.43,
   "noise_inconsistency/video": 0.06,
   "quote_not_in_transcript/audio": 0.36,
@@ -435,62 +378,103 @@
   "temporal_spike/video": 0.15
  },
  "held_out": {
-  "tp": 8,
-  "fn": 2,
-  "fp": 4,
-  "tn": 3,
+  "tp": 6,
+  "fn": 4,
+  "fp": 2,
+  "tn": 5,
   "hit_rate": [
-   0.8,
-   0.49015684672072335,
-   0.9433190520193067
+   0.6,
+   0.3126695474501864,
+   0.8318224187964902
   ],
   "false_alarm_rate": [
-   0.5714285714285714,
-   0.2504542304090258,
-   0.8417830777373732
+   0.2857142857142857,
+   0.0822171657090155,
+   0.6410709098517873
   ]
  },
- "learned_weights": {
+ "learned": {
   "learned_synthetic_image/image": {
-   "public_test": 0.85,
-   "own": 0.0,
-   "combined": 0.85
+   "hits": 0,
+   "false_alarms": 0,
+   "n_manipulated": 0,
+   "n_untouched": 0,
+   "phone_holdout": 0,
+   "false_alarm_rate": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "precision": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "hit_rate": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "need": {
+    "untouched": 10,
+    "ai": 10
+   },
+   "weight": null
   },
   "learned_synthetic_video/video": {
-   "public_test": 0.84,
-   "own": "uncalibrated",
-   "combined": 0.82
+   "hits": 0,
+   "false_alarms": 1,
+   "n_manipulated": 0,
+   "n_untouched": 1,
+   "phone_holdout": 0,
+   "false_alarm_rate": [
+    1.0,
+    0.20654329147389294,
+    1.0
+   ],
+   "precision": [
+    0.0,
+    0.0,
+    0.7934567085261071
+   ],
+   "hit_rate": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "need": {
+    "untouched": 9,
+    "ai": 10
+   },
+   "weight": null
   },
   "learned_synthetic_audio/audio": {
-   "public_test": 0.83,
-   "own": "uncalibrated",
-   "combined": 0.82
+   "hits": 0,
+   "false_alarms": 1,
+   "n_manipulated": 0,
+   "n_untouched": 2,
+   "phone_holdout": 0,
+   "false_alarm_rate": [
+    0.5,
+    0.09452865480086614,
+    0.9054713451991339
+   ],
+   "precision": [
+    0.0,
+    0.0,
+    0.7934567085261071
+   ],
+   "hit_rate": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "need": {
+    "untouched": 8,
+    "ai": 10
+   },
+   "weight": null
   }
  },
- "public_test": {
-  "image": {
-   "n": 855,
-   "model_version": "image-clipL14-20261120",
-   "threshold": 0.7368,
-   "versions_in_export": [
-    "image-clipL14-20261120"
-   ]
-  },
-  "audio": {
-   "n": 587,
-   "model_version": "audio-wavlmB+-20261120",
-   "threshold": 0.7147,
-   "versions_in_export": [
-    "audio-wavlmB+-20261120"
-   ]
-  },
-  "video": {
-   "n": 156,
-   "model_version": "video-clipL14-20261120",
-   "threshold": 0.5359,
-   "versions_in_export": [
-    "video-clipL14-20261120"
-   ]
-  }
- }
+ "excluded_trained_on": []
 }

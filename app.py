@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from rapidfuzz import fuzz
 from truthlens.vault import Case, CASES, sha256
 from truthlens import pipeline, report, fusion, llm, learned
+from calibrate import MIN_OWN
 from truthlens.analyzers import IMAGE_EXTS, TEXT_EXTS
 from truthlens.analyzers.media_meta import readable_image
 
@@ -59,7 +60,8 @@ TERMS = {  # indicator type -> (plain name, what it means); used for tooltips an
     "image_matches_frame": ("image = frame", "An image matches a frame of the video."),
     "lipsync_mismatch": ("lip-sync", "Mouth movement and speech loudness are offset or do not follow each other."),
     **{f"learned_synthetic_{m}": (f"trained detector ({m})", f"A neural network trained to tell AI-generated {m} from "
-                                  "camera or microphone recordings scored this file at or above its threshold. See MODEL_CARD.md.")
+                                  "camera or microphone recordings scored this file at or above its threshold. Not counted in the label "
+                                  "until calibrated on our own media; model card on the Calibration page.")
        for m in ("image", "video", "audio")},
 }
 CHECK_NAMES = {"face_region_flicker": "face flicker", "lipsync": "lip-sync", "claims from the caption": "claims",
@@ -207,7 +209,8 @@ def tag_card(t, i, open_details=False):
     name, tip = term(i.type)
     g = fusion.group(i)
     rel = " ↔ " + e(", ".join(i.related)) if i.related else ""
-    score = (f"{i.score:.2f} × w {w:.2f} = {fusion.contribution(i):.2f}" if cal_ok else f"{i.score:.2f} · uncalibrated")
+    score = (f"{i.score:.2f} × w {w:.2f} = {fusion.contribution(i):.2f}" if cal_ok else f"{i.score:.2f}" + (f" ≥ threshold {i.location['threshold']:.2f}" if "threshold" in i.location else "")
+             + f" · {fusion.UNCALIBRATED}")
     md(f'<div class="tag{"" if cal_ok else " uncal"}" style="--c:{c}"><div class="head">'
        f'<span class="tagno">{t}</span><span aria-hidden="true">{ICON.get(i.modality, "")}</span>'
        f'<span class="name" title="{e(tip)}">{e(name)}</span><span class="chip" style="--c:{GROUP_C[g]}">{g}</span>'
@@ -971,23 +974,34 @@ def calibration_tab():
 <li>The test set is small and team-made, so every rate has a wide interval: read the bars, not the dots.</li>
 <li>Platform recompression and resizing can both create and erase these indicators.</li>
 <li>{e(fusion.ALIGN_RULE)}</li>
-<li>Trained detectors: {e(learned.WEAK)} They can score phone, messenger and stock footage unlike their training data
-as AI-generated; see the model card below and LIMITATIONS.md.</li>
+<li>Trained detectors: {e(learned.WEAK)} {e(learned.FIRST_RESULT)}</li>
 <li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
 <li>No indicators does not mean unaltered. The language model reads text, compares captions with pictures and lists visible
 artifacts with their location; it is never asked whether media is synthetic.</li></ul></div>''')
-    if lw := cal.get("learned_weights"):
+    if lw := cal.get("learned"):
         td = 'style="padding:4px 12px"'
-        md('<div class="panel small"><b>Trained detectors: weight by calibration source</b> <span class="muted">public_test = the '
-           "detector server's held-out test predictions · own = our test set · combined = used for the label</span>"
-           f'<table class="mono" style="margin-top:6px;border-collapse:collapse"><tr><td {td}></td>'
-           + "".join(f'<td class="muted" {td}>{k}</td>' for k in ("public_test", "own", "combined")) + "</tr>"
-           + "".join(f'<tr><td {td}>{e(t)}</td>' + "".join(f'<td {td}>{e(str(v.get(k, "—")))}</td>' for k in ("public_test", "own", "combined"))
-                     + "</tr>" for t, v in lw.items()) + "</table></div>")
-    card = ROOT / "MODEL_CARD.md"
-    if card.exists():
-        with st.expander("Model card: trained detectors (MODEL_CARD.md)"):
-            st.markdown(card.read_text(encoding="utf-8"))
+        md('<div class="panel small"><b>Trained detectors on our own media</b> <span class="muted">weight 0 (uncalibrated, not '
+           f"counted in the label) until a media type has {MIN_OWN} untouched and {MIN_OWN} AI files of our own</span>"
+           f'<table class="mono" style="margin-top:6px;border-collapse:collapse"><tr>'
+           + "".join(f'<td class="muted" {td}>{k}</td>' for k in ("detector", "untouched (phone hold-out)", "false alarms", "AI files",
+                                                                 "weight", "still needed")) + "</tr>"
+           + "".join(f'<tr><td {td}>{e(t)}</td><td {td}>{v["n_untouched"]} ({v["phone_holdout"]})</td>'
+                     f'<td {td}>{v["false_alarms"]}/{v["n_untouched"]}</td><td {td}>{v["n_manipulated"]}</td>'
+                     f'<td {td}>{"uncalibrated" if v["weight"] is None else v["weight"]}</td>'
+                     f'<td {td}>{v["need"]["untouched"]} untouched, {v["need"]["ai"]} AI</td></tr>' for t, v in lw.items())
+           + "</table></div>")
+    card = server_model_card()
+    with st.expander("Model card: trained detectors (from the detector server)"):
+        if card:
+            st.markdown(card)
+        else:
+            md('<div class="muted small">Model card: not yet available from the detector server</div>')
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def server_model_card():
+    return llm.model_card()
+
 
 def results_page(case):
     res = load(case.id, mtime(case.id))

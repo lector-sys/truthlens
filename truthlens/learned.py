@@ -1,20 +1,18 @@
 """Trained AI-generation detectors on the GPU host (llm.detect, DETECTORS_URL) as findings: learned_synthetic_image /
 _audio / _video. One finding per file when the detector's score reaches its own threshold; below it, nothing (the
-score is logged with the call). Every finding names the model version, what it was trained on and where it is weak.
-Model details and test numbers: MODEL_CARD.md."""
+score is logged with the call). Every finding names the model version, its score and threshold, what the server says it
+was trained on, and where it is weak. The model card comes from the server (llm.model_card), never written here.
+Weight: 0 until calibrate.py has enough of our own media (MIN_OWN), so the finding shows as uncalibrated."""
 import base64
 from PIL import Image
 from . import llm
 from .indicator import Indicator
 
-# Generator families in the server's held-out test exports (/exports/test_predictions/{modality}); MODEL_CARD.md has
-# the dataset sources and licences.
-TRAINED_ON = {
-    "image": "GenImage subset (ADM, BigGAN, GLIDE, Stable Diffusion 1.5, VQDM, Wukong vs ImageNet photos)",
-    "audio": "ASVspoof 2019 LA (synthetic speech attacks A07-A19 vs VCTK studio recordings)",
-    "video": "text-to-video clips (AnimateDiff-Lightning, CogVideoX-5B, Runway, Stable Diffusion video, VideoPoet) vs Pexels stock footage",
-}
 WEAK = ("Weak on generators not in training (e.g. Sora, Kling, Pika, Midjourney); no face-swap training data.")
+# "untouched", not the brief's "genuine": the output wording rules ban genuine / real / authentic / fake / proof / verdict
+FIRST_RESULT = ("On our own untouched phone and WhatsApp recordings, the first trained detectors flagged 2 of 3 as AI. They "
+                "were trained on studio speech and stock footage. They don't count toward the label until calibrated on our "
+                "own media.")
 ALT = {
     "image": ["phone processing (HDR, night mode, beauty filters, upscaling) the training photos did not have",
               "heavy recompression or resizing by a messenger or social site",
@@ -35,7 +33,8 @@ def analyze(path, case, modality, seconds=0.0):
         return []
     s, thr, ver, loc = r["score"], r["threshold"], r.get("model_version", "?"), r.get("location", {})
     head = (f"A trained AI-generation detector ({ver}) scores this {modality} {s:.2f}, at or above its threshold of {thr:.2f}")
-    tail = f" Trained on: {TRAINED_ON[modality]}. {WEAK} Trained detector: see MODEL_CARD.md."
+    trained = r.get("trained_on") or "not reported by the detector server (see the model card on the Calibration page)"
+    tail = f" Trained on: {trained if isinstance(trained, str) else ', '.join(trained)}. {WEAK} {FIRST_RESULT}"
     location, artifact, where = {"model_version": ver, "threshold": thr}, None, ""
     if modality == "image":
         try:

@@ -420,6 +420,24 @@ def detect(path, modality, case=None, seconds=0.0):
     return None
 
 
+def model_card():
+    """The detector server's model card (GET DETECTORS_URL/model_card, markdown or {"markdown"|"card": ...}), or None
+    when unset, down, missing or empty. Nothing is ever substituted for it."""
+    if not DETECTORS_URL:
+        return None
+    try:
+        with urllib.request.urlopen(DETECTORS_URL.rstrip("/") + "/model_card", timeout=PROBE_S) as r:
+            text = r.read().decode()
+    except (OSError, ValueError):
+        return None
+    try:
+        d = json.loads(text)
+        text = d.get("markdown") or d.get("card") or "" if isinstance(d, dict) else text
+    except ValueError:
+        pass
+    return text.strip() or None
+
+
 def provenance(log):
     """Where this case's model calls ran, plus the local-only statement when no cloud provider was used. None if no calls."""
     calls = [e for e in log if e["action"] == "llm_call"]

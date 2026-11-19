@@ -538,6 +538,7 @@ try:
     heat = io.BytesIO()
     Image.new("L", (64, 48), 128).save(heat, "PNG")
     reply = {"image": {"model_version": "image-test-1", "score": 0.91, "threshold": 0.7, "is_ai": True, "width": 64, "height": 48,
+                       "trained_on": "test images A",
                        "location": {"heatmap_png_base64": __import__("base64").b64encode(heat.getvalue()).decode(),
                                     "boxes": [{"box": [8, 8, 24, 24], "weight": 0.4}, {"box": [32, 16, 48, 32], "weight": 1.0}]}},
              "audio": {"model_version": "audio-test-1", "score": 0.8, "threshold": 0.7, "is_ai": True,
@@ -548,8 +549,22 @@ try:
             pass
 
         def do_GET(self):
-            self._send({"ok": True, "models": {"image": {"version": "image-test-1", "threshold": 0.7},
-                                               "audio": {"version": "audio-test-1", "threshold": 0.7}}})
+            if self.path == "/health":
+                return self._send({"ok": True, "models": {"image": {"version": "image-test-1", "threshold": 0.7},
+                                                          "audio": {"version": "audio-test-1", "threshold": 0.7}}})
+            body = {"/model_card": self.server.card, "/exports/training_hashes": "sha256\n" + "a" * 64 + "\n",
+                    "/exports/phone_holdout/image": "sha256,label,modality,generator,source,score,model_version\n"
+                    + "a" * 64 + ",real,image,iPhone,phone,0.9,image-test-1\n" + "b" * 64 + ",real,image,iPhone,phone,0.95,image-test-1\n"
+                    + "c" * 64 + ",real,image,iPhone,phone,0.1,image-test-1\n"}.get(self.path)
+            if body is None:
+                self.send_response(404)
+                self.end_headers()
+                return
+            b = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
 
         def do_POST(self):
             self.rfile.read(int(self.headers["Content-Length"]))
@@ -565,7 +580,7 @@ try:
             self.end_headers()
             self.wfile.write(b)
     det = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Det)
-    det.daemon_threads, det.slow = True, False
+    det.daemon_threads, det.slow, det.card = True, False, None
     threading.Thread(target=det.serve_forever, daemon=True).start()
     dead = socket.socket()
     dead.bind(("127.0.0.1", 0))  # bound, never listening: connection refused
@@ -578,9 +593,22 @@ try:
         llm.DETECTORS_URL = f"http://127.0.0.1:{det.server_address[1]}"
         f = learned.analyze(pic, dc, "image")[0]
         assert f.type == "learned_synthetic_image" and fusion.group(f) == "Generated" and f.location["bbox"] == [32, 16, 16, 16], f
-        assert all(s in f.explanation for s in ("image-test-1", "0.91", "Trained on: GenImage", "Sora", "no face-swap")), f.explanation
+        assert all(s in f.explanation for s in ("image-test-1", "0.91", "0.70", "Trained on: test images A", "Sora", "no face-swap",
+                                                learned.FIRST_RESULT)), f.explanation
+        own = fusion.load_calibration().get("learned", {})  # a loaded weight must come from the own-media gate
+        assert all(own.get(k, {}).get("weight") is not None for k in fusion.TYPE_WEIGHT if k.startswith("learned_")), own
         assert Path(f.artifact).exists() and not banned.search(f.explanation + " ".join(f.alt_explanations)), f
         a = learned.analyze(voice, dc, "audio")[0]
+        assert "Trained on: not reported by the detector server" in a.explanation, a.explanation
+        # model card: only what the server serves, else nothing (the page then says "not yet available")
+        assert llm.model_card() is None
+        det.card = "# Card\ntrained on X"
+        assert llm.model_card() == "# Card\ntrained on X"
+        # calibration: training hashes from the server; phone hold-out rows are ours, minus files it trained on
+        assert calibrate.training_hashes() == {"a" * 64}
+        hold = calibrate.phone_holdout(calibrate.training_hashes())
+        assert [r["sha256"][0] for r in hold] == ["b", "c"] and {r["source"] for r in hold} == {"phone_holdout"}, hold
+        assert [bool(r["indicators"]) for r in hold] == [True, False]  # fires at or above the server threshold only
         assert (a.location["start"], a.location["end"]) == (1.0, 3.0) and len(a.location["windows"]) == 2, a.location
         assert dc.entries()[-1]["action"] == "llm_call" and dc.entries()[-1]["model"] == "audio-test-1"
         det.slow = True
@@ -605,6 +633,18 @@ try:
         det.shutdown()
         dead.close()
         dc.delete()
+    # trained detectors: no public test-split rows; weight 0 below MIN_OWN untouched + MIN_OWN AI rows of our own (ph_ ignored)
+    assert "public_test" not in Path("calibrate.py").read_text(encoding="utf-8")
+    ld = lambda n: [Indicator("x", "image", "learned_synthetic_image", 0.9, "medium", "")] * n
+
+    def rows(n_real, n_ai, fire_real=0):
+        return ([{"file": f"r{k}.jpg", "media": "image", "label": "real", "indicators": ld(k < fire_real)} for k in range(n_real)]
+                + [{"file": f"a{k}.jpg", "media": "image", "label": "manipulated", "ai": True, "indicators": ld(1)} for k in range(n_ai)]
+                + [{"file": f"ph_{k}.jpg", "media": "image", "label": "real", "indicators": []} for k in range(20)])
+    few = calibrate.learned_fit(rows(9, 10), "image")
+    assert few["weight"] is None and few["need"] == {"untouched": 1, "ai": 0} and few["n_untouched"] == 9, few
+    enough = calibrate.learned_fit(rows(10, 10, fire_real=2), "image")
+    assert enough["weight"] > 0 and enough["false_alarms"] == 2, enough
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
     case.delete()

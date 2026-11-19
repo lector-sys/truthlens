@@ -143,17 +143,27 @@
   0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
 - Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
 
-## Trained AI-generation detectors integrated (2026-11-20)
+## Trained AI-generation detectors: shown, not counted (2026-11-20)
 GPU host serves `/image` `/audio` `/video` at `DETECTORS_URL` (.env). `llm.detect` (cache first, /health probe, one retry,
 else "detector server unavailable"); `truthlens/learned.py` turns a score at or above the server threshold into
-`learned_synthetic_{image,audio,video}` (Generated group) naming version, training data and limits. A video's soundtrack is
-not sent to the audio detector. Calibration: the server's held-out test predictions are rows (source=public_test) for these
-types only. Weights public_test / own / combined: image 0.85 / 0.0 / 0.85, video 0.84 / uncalibrated / 0.82, audio
-0.83 / uncalibrated / 0.82 (own = placeholders + 3 phone files, too few rows).
+`learned_synthetic_{image,audio,video}` (Generated group) with version, score, threshold, server-reported training data and
+limits. A video's soundtrack is not sent to the audio detector.
 Our untouched files: 1.m4a audio 0.90 (threshold 0.71) **false alarm**, 5.m4a audio 0.62 below, WhatsApp video 0.69
-(threshold 0.54) **false alarm** -> 2/3. Labels after Analyze fresh: 1.m4a Limited -> Moderate 0.74, 5.m4a Limited
-(unchanged), WhatsApp Weak 0.15 -> Moderate 0.63; demo1/2/3 unchanged (0.72 / 0.67 / 0.35). See MODEL_CARD.md, LIMITATIONS.md.
-No testset file was sent to the GPU host before training (Taildrop delivered nothing), so no training overlap.
+(threshold 0.54) **false alarm** -> 2/3. They were trained on studio speech and stock footage.
+- First integration weighted them from the server's own test split (public_test, ~0.82-0.85): 1.m4a went Moderate 0.74,
+  WhatsApp Moderate 0.63. **Withdrawn**: public_test rows are no longer used at all.
+- Now: weight only from our own rows (no ph_; plus the server's phone hold-out, `source=phone_holdout`, once it exists),
+  and only when a media type has >= 10 untouched AND >= 10 AI rows (`calibrate.MIN_OWN`); until then weight 0,
+  "uncalibrated (not counted in label)". Files whose SHA-256 is in `/exports/training_hashes` are excluded from calibration.
+  Current counts: image 0 untouched / 0 AI, video 1 / 0, audio 2 / 0 -> all uncalibrated.
+- Labels after Analyze fresh: 1.m4a Limited (detector 0.90 shown, uncalibrated), 5.m4a Limited, WhatsApp Weak 0.15
+  (detector 0.69 shown, uncalibrated); demo1/2/3 Moderate 0.72 / Moderate 0.67 / Weak 0.35 (unchanged).
+- Calibration (SYNTHETIC, n=44): held-out caught 6/10, false alarms 2/7.
+- Model card: only `GET /model_card` from the server; until it serves one the Calibration page says "Model card: not yet
+  available from the detector server". The earlier hand-written MODEL_CARD.md was deleted. Limits: docs/LIMITATIONS.md.
+- Waiting on the home PC: `/model_card`, `/exports/training_hashes`, `/exports/phone_holdout/{modality}` (404 so far).
+- Taildrop to the home PC sends fine ("sent", exit 0) but its inbox stayed empty; likely the Windows app saves straight
+  to Downloads. No testset file reached the GPU host before training, so no training overlap.
 
 ## Speech-aware audio, process watchdog, first real rows (2026-11-20)
 - **audio_splice** now measures room tone only in pauses: speech mask = level above a local floor (10th percentile

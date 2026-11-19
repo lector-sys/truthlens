@@ -2,7 +2,7 @@
 fusion weights on a calibration split and report case-level hit / false-alarm rates on the held-out split, with Wilson
 95% intervals. Writes calibration.json (fusion.py and the dashboard read it) and prints a markdown table for the slide.
 Rows whose file starts with ph_ are synthetic placeholders: refused unless --allow-placeholder, then stamped SYNTHETIC."""
-import csv, datetime, io, json, math, random, subprocess, sys, urllib.request
+import csv, datetime, hashlib, io, json, math, random, re, subprocess, sys, urllib.request
 from collections import Counter
 from pathlib import Path
 from PIL import Image
@@ -105,44 +105,60 @@ def fit(results):
 
 
 LEARNED = "learned_synthetic_"
-MIN_ROWS = 5  # fewer manipulated or untouched rows of a media than this: the trained detector stays uncalibrated there
+MIN_OWN = 10  # trained detectors weigh 0 for a media until we have this many untouched AND this many AI rows of our own
 
 
-def public_test():
-    """The detector server's held-out TEST predictions as calibration rows (source=public_test), for learned_synthetic_*
-    weights only: a row "fires" when its score reaches the server's threshold. -> (rows, {media: info}); ([], {}) when
-    the server is unset or down."""
+def _get(path, timeout=30):
+    """Body of GET DETECTORS_URL/path as text, or None (unset, down, 404)."""
     if not llm.DETECTORS_URL:
-        return [], {}
-    base, rows, info = llm.DETECTORS_URL.rstrip("/"), [], {}
+        return None
     try:
-        with urllib.request.urlopen(base + "/health", timeout=10) as r:
-            models = json.load(r)["models"]
-        for med, m in models.items():
-            with urllib.request.urlopen(f"{base}/exports/test_predictions/{med}", timeout=60) as r:
-                got = list(csv.DictReader(io.StringIO(r.read().decode())))
-            rows += [{"file": g["sha256"], "label": "manipulated" if g["label"] == "ai" else "real", "media": med,
-                      "source": "public_test", "indicators": [Indicator(g["sha256"], med, LEARNED + med, float(g["score"]), "medium", "")]
-                      if float(g["score"]) >= m["threshold"] else []} for g in got]
-            info[med] = {"n": len(got), "model_version": m["version"], "threshold": m["threshold"],
-                         "versions_in_export": sorted({g["model_version"] for g in got})}
-    except (OSError, ValueError, KeyError) as e:
-        print(f"warning: no public_test rows ({e!r}); trained detectors are fitted on our own files only")
-        return [], {}
-    return rows, info
+        with urllib.request.urlopen(llm.DETECTORS_URL.rstrip("/") + path, timeout=timeout) as r:
+            return r.read().decode()
+    except (OSError, ValueError):
+        return None
 
 
-def learned_fit(rows, key):
-    """Firing counts and weight of one learned_synthetic_* / media pair on `rows`; weight None (uncalibrated) when either
-    class has fewer than MIN_ROWS rows of that media."""
-    t, med = key.split("/")
-    rs = [r for r in rows if r["media"] == med]
-    n = Counter(r["label"] for r in rs)
-    k = {lab: sum(r["label"] == lab and any(i.type == t and i.score >= FIRE for i in r["indicators"]) for r in rs) for lab in LABELS}
-    ok = n["manipulated"] >= MIN_ROWS and n["real"] >= MIN_ROWS
-    return {"hits": k["manipulated"], "false_alarms": k["real"], "n_manipulated": n["manipulated"], "n_untouched": n["real"],
-            "precision": wilson(k["manipulated"], k["manipulated"] + k["real"]), "hit_rate": wilson(k["manipulated"], n["manipulated"]),
-            "weight": weight(k["manipulated"], k["real"], n["manipulated"], n["real"]) if ok else None}
+def training_hashes():
+    """SHA-256s of every file the detector server trained on (/exports/training_hashes; any format: every 64-hex token)."""
+    return set(re.findall(r"\b[0-9a-f]{64}\b", (_get("/exports/training_hashes", 60) or "").lower()))
+
+
+def phone_holdout(trained=frozenset()):
+    """The server's held-out phone predictions as rows of our own (source=phone_holdout), for learned_synthetic_* only;
+    a row fires when its score reaches the server's threshold. Files it trained on are dropped. [] if not available."""
+    try:
+        models = json.loads(_get("/health", 10) or "{}").get("models", {})
+    except ValueError:
+        models = {}
+    rows = []
+    for med, m in models.items():
+        for g in csv.DictReader(io.StringIO(_get(f"/exports/phone_holdout/{med}", 60) or "")):
+            if g["sha256"].lower() in trained:
+                continue
+            rows.append({"file": g["sha256"], "sha256": g["sha256"].lower(), "media": med, "source": "phone_holdout",
+                         "label": "real" if g["label"] == "real" else "manipulated", "ai": g["label"] == "ai",
+                         "indicators": [Indicator(g["sha256"], med, LEARNED + med, float(g["score"]), "medium", "")]
+                         if float(g["score"]) >= m["threshold"] else []})
+    return rows
+
+
+def learned_fit(rows, med):
+    """Trained detector for one media, from our own rows only (no ph_ placeholders; phone_holdout rows count as ours):
+    untouched rows vs AI rows (ai_generated / cloned_voice / ai_video, or AI in the phone hold-out). Weight None
+    (uncalibrated, weighs 0) until both reach MIN_OWN; `need` = how many more of each."""
+    t = LEARNED + med
+    rs = [r for r in rows if r["media"] == med and not r["file"].startswith("ph_")]
+    fired = lambda r: any(i.type == t and i.score >= FIRE for i in r["indicators"])
+    real = [r for r in rs if r["label"] == "real"]
+    ai = [r for r in rs if r.get("ai")]
+    hits, fa = sum(map(fired, ai)), sum(map(fired, real))
+    ok = len(real) >= MIN_OWN and len(ai) >= MIN_OWN
+    return {"hits": hits, "false_alarms": fa, "n_manipulated": len(ai), "n_untouched": len(real),
+            "phone_holdout": sum(r.get("source") == "phone_holdout" for r in rs),
+            "false_alarm_rate": wilson(fa, len(real)), "precision": wilson(hits, hits + fa), "hit_rate": wilson(hits, len(ai)),
+            "need": {"untouched": max(0, MIN_OWN - len(real)), "ai": max(0, MIN_OWN - len(ai))},
+            "weight": weight(hits, fa, len(ai), len(real)) if ok else None}
 
 
 def evaluate(results, weights):
@@ -169,9 +185,12 @@ def table(rec):
                      f"{pct(d['precision'])} | {d['weight']} |")
     lines += ["", f"Held-out case level (Moderate/Strong = flagged): caught {h['tp']}/{h['tp'] + h['fn']} manipulated "
                   f"= {pct(h['hit_rate'])}; false alarms {h['fp']}/{h['fp'] + h['tn']} untouched = {pct(h['false_alarm_rate'])}"]
-    if rec.get("learned_weights"):
-        lines += ["", "| Trained detector | public_test | own | combined (used) |", "|---|---|---|---|"]
-        lines += [f"| {k} | {v['public_test']} | {v['own']} | {v['combined']} |" for k, v in rec["learned_weights"].items()]
+    if rec.get("learned"):
+        lines += ["", "| Trained detector | our untouched (phone hold-out) | fired on untouched | our AI | weight | still needed |",
+                  "|---|---|---|---|---|---|"]
+        lines += [f"| {k} | {v['n_untouched']} ({v['phone_holdout']}) | {v['false_alarms']}/{v['n_untouched']} = "
+                  f"{pct(v['false_alarm_rate'])} | {v['n_manipulated']} | {v['weight'] if v['weight'] is not None else 'uncalibrated'} | "
+                  f"{v['need']['untouched']} untouched, {v['need']['ai']} AI |" for k, v in rec["learned"].items()]
     return "\n".join(lines)
 
 
@@ -207,6 +226,11 @@ def run(argv=()):
         except OSError:
             pass  # missing (reported above) or HEIC etc. (the pipeline converts it; size not checked here)
 
+    trained = training_hashes()
+    excluded = [r["file"] for r in rows if hashlib.sha256((ROOT / "media" / r["file"]).read_bytes()).hexdigest() in trained]
+    if excluded:
+        print(f"excluded {len(excluded)} rows the detector server trained on: {', '.join(excluded)}")
+    rows = [r for r in rows if r["file"] not in excluded]
     results = []
     for i, row in enumerate(rows):
         media = ROOT / "media" / row["file"]
@@ -215,6 +239,7 @@ def run(argv=()):
             case.ingest(media.name, media.read_bytes())
             res = pipeline.run(case, row.get("context", ""))
             results.append({"file": row["file"], "label": row["label"], "media": fusion.media(media.name),  # as routed
+                            "ai": row["manipulation"] in GENERATED,
                             "indicators": res["indicators"]})
             print(f"{row['file']}: {row['label']} -> {res['assessment']['case']['label']}")
         finally:
@@ -222,16 +247,16 @@ def run(argv=()):
 
     cal, held = split(results)
     det = {k: d for k, d in fit(cal).items() if not k.startswith(LEARNED)}
-    public, public_info = public_test()
+    holdout = phone_holdout(trained)
     learned = {}
     for med in ("image", "video", "audio"):
         key = f"{LEARNED}{med}/{med}"
-        src = {"public_test": learned_fit(public, key), "own": learned_fit(cal, key), "combined": learned_fit(cal + public, key)}
-        learned[key] = {k: v["weight"] if v["weight"] is not None else "uncalibrated" for k, v in src.items()}
-        print(f"{key}: " + "; ".join(f"{k} {v['hits']}/{v['n_manipulated']} vs {v['false_alarms']}/{v['n_untouched']} -> w "
-                                    f"{v['weight']}" for k, v in src.items()))
-        if src["combined"]["weight"] is not None:
-            det[key] = {**src["combined"], "sources": "public_test + own calibration split"}
+        # ponytail: all own rows, held-out split included; fine while weights are 0, split them once MIN_OWN is reached
+        learned[key] = d = learned_fit(results + holdout, med)
+        print(f"{key}: untouched {d['n_untouched']} ({d['phone_holdout']} phone hold-out), false alarms {d['false_alarms']}, "
+              f"AI {d['n_manipulated']}, weight {d['weight']}, still needed {d['need']}")
+        if d["weight"] is not None:
+            det[key] = d
     det = dict(sorted(det.items()))
     weights = {t: d["weight"] for t, d in det.items()}
     git = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -239,7 +264,7 @@ def run(argv=()):
            "n_held_out": len(held), "date": datetime.date.today().isoformat(), "git": git or "?",
            "excluded_smoke_only": [r["file"] for r in skipped],
            "detectors": det, "weights": weights, "held_out": evaluate(held, weights),
-           "learned_weights": learned, "public_test": public_info}
+           "learned": learned, "excluded_trained_on": excluded}
     fusion.CALIBRATION.write_text(json.dumps(rec, indent=1), encoding="utf-8")
     hist = HISTORY / f"calibration_{datetime.datetime.now():%Y-%m-%d_%H%M%S}_{rec['git']}.json"
     hist.parent.mkdir(parents=True, exist_ok=True)
