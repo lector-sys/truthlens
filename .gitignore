@@ -13,3 +13,10 @@ docs/screenshots/v2/*
 !docs/screenshots/v2/showme_demo1_1280x720.png
 !docs/screenshots/v2/tab_Evidence_demo2_1280x720.png
 !docs/screenshots/v2/report_demo1_1280x720.png
+docs/screenshots/v3/*
+!docs/screenshots/v3/overview_1280x720.png
+!docs/screenshots/v3/evidence_1280x720.png
+!docs/screenshots/v3/analysis_1920x1080.png
+!docs/screenshots/v3/calibration_1280x720.png
+!docs/screenshots/v3/custody_1280x720.png
+!docs/screenshots/v3/overview_390x844.png

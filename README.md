@@ -64,15 +64,16 @@ fusion and the dashboard load. Synthetic `ph_*` placeholder rows (`python testse
 `--allow-placeholder`, and are then stamped SYNTHETIC everywhere.
 
 ## Screens
-Upload → Analyzing → Results, themed as an evidence light table.
+A forensic workbench: sidebar navigation, live service status, an overview of the case, then Analysis, Evidence viewer,
+Calibration and Chain of custody.
 
-| Results | Analyzing | Custody |
+| Overview | Evidence viewer | Analysis |
 |---|---|---|
-| ![](docs/screenshots/v2/results_demo2_1280x720.png) | ![](docs/screenshots/v2/flow_1280x720_analyzing.png) | ![](docs/screenshots/v2/tab_Custody_demo2_1280x720.png) |
+| ![](docs/screenshots/v3/overview_1280x720.png) | ![](docs/screenshots/v3/evidence_1280x720.png) | ![](docs/screenshots/v3/analysis_1920x1080.png) |
 
-| Show me (focused tag) | Evidence viewer | Report (print theme) |
+| Calibration | Chain of custody | Phone (390 px) |
 |---|---|---|
-| ![](docs/screenshots/v2/showme_demo1_1280x720.png) | ![](docs/screenshots/v2/tab_Evidence_demo2_1280x720.png) | ![](docs/screenshots/v2/report_demo1_1280x720.png) |
+| ![](docs/screenshots/v3/calibration_1280x720.png) | ![](docs/screenshots/v3/custody_1280x720.png) | ![](docs/screenshots/v3/overview_390x844.png) |
 
-The full set (1280×720 and 1920×1080) is kept locally in `docs/screenshots/v2/` (git-ignored). Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
+The full set (390 px, 1280×720 and 1920×1080) is kept locally in `docs/screenshots/v3/` (git-ignored). Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
 team brief: [TASKS.md](TASKS.md) · rules: [AGENTS.md](AGENTS.md) · state + open items: [NOTES_STATE.md](NOTES_STATE.md)

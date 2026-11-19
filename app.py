@@ -2,7 +2,8 @@
 One flow: Upload -> Analyzing -> Results (overview, then Evidence / Cross-media / All findings / Custody / Calibration).
 Theme "Evidence Light Table": ui/theme.css + .streamlit/config.toml, fonts bundled in static/fonts. Display only:
 nothing here changes an analysis result, weight or label."""
-import base64, hashlib, html, io, json, logging, re, threading, time, traceback
+import base64, hashlib, html, io, json, logging, os, re, threading, time, traceback, urllib.error, urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 import numpy as np
 import streamlit as st
@@ -29,7 +30,9 @@ GROUPS = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "s
 ICON = {"image": "🖼️", "video": "🎞️", "audio": "🎙️", "text": "📝", "cross": "🔗"}
 LAYER = {"ELA": ("_ela.png", (79, 209, 197)), "Noise map": ("_noise.png", (242, 181, 68)),
          "Trained detector": ("_learned.png", (187, 154, 247))}
-TABS = ["Evidence", "Cross-media", "All findings", "Custody", "Calibration"]
+PAGES = ["Overview", "Analysis", "Evidence viewer", "Calibration", "Chain of custody"]
+PUBLIC = os.getenv("TRUTHLENS_PUBLIC") == "1"
+MEDIA_ROWS = {"image": "Image", "video": "Video", "audio": "Audio", "cross": "Cross-modal"}
 HIDDEN = ("smoke_", "calib_", "probe_", "diag_", "pv_", "tmp_")
 TERMS = {  # indicator type -> (plain name, what it means); used for tooltips and the sidebar glossary
     "exif_missing": ("missing EXIF", "No camera metadata (EXIF) in the file. Messengers and social sites usually strip it."),
@@ -233,15 +236,16 @@ def film_strip(frames, hits, focus_t=None, n=8):
     return '<div class="film" role="list" aria-label="Keyframes">' + "".join(cells) + "</div>"
 
 
-def custody_stamp(case, log, integrity):
+def custody_stamp(case, log, res):
     ingests = [x for x in log if x["action"] == "ingest"]
     t0 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ingests[0]["ts"])) if ingests else "–"
-    ok = bool(integrity) and all(integrity.values())
+    ok, bad = verified(res, log), not all(res["integrity"].values())
     hashes = "".join(f'<div class="v h" title="{e(x["sha256"])}">{e(x["file"][:40])} · sha256 {x["sha256"][:12]}…{x["sha256"][-4:]}</div>'
                      for x in ingests)
     md(f'<div class="stamp" role="group" aria-label="Custody stamp"><div class="k">case</div><div class="v">{e(case.id)}</div>'
        f'<div class="k" style="margin-top:6px">evidence</div>{hashes}<div class="k" style="margin-top:6px">intake</div>'
-       f'<div class="v">{t0}</div><div class="{"ok" if ok else "no"}">{"INTEGRITY VERIFIED ✓" if ok else "NOT VERIFIED ✗"}</div></div>')
+       f'<div class="v">{t0}</div><div class="{"ok" if ok else "no" if bad else "pend"}">'
+       f'{"INTEGRITY VERIFIED ✓" if ok else "HASH MISMATCH ✗" if bad else "NOT YET VERIFIED ○"}</div></div>')
 
 
 def gauge(label, p):
@@ -289,7 +293,7 @@ def label_hero(res, inds, a):
     md(f'<div class="panel"><div class="hero"><div class="g">{gauge(lab, p)}</div><div class="t">'
        f'<div class="lab" style="--c:{c}"><i>{icon}</i>{word} indicators</div>{limited}'
        f'<div class="mostly">{mostly}</div>'
-       f'<div>Automated indicators, not proof. Review the evidence tags below.</div>'
+       f'<div class="notice">Automated indicators, not proof. Review the underlying evidence and benign explanations.</div>'
        f'<div class="mono tiny muted" style="margin-top:6px">fused strength {p:.2f} · label of manipulation or synthetic generation</div>'
        f'{creds}{sure}</div></div></div>')
 
@@ -343,18 +347,49 @@ def report_html(case_id, mtime, log_size):
     return report.render(c, load(case_id, mtime))
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def services():
+    """{service: up?} for each configured GPU-server service; any HTTP answer counts as up."""
+    out = {}
+    for name, url, path in (("Language model", llm.OLLAMA_URL, "/api/tags"), ("Transcription", llm.WHISPER_URL, "/"),
+                            ("Trained detectors", llm.DETECTORS_URL, "/health")):
+        if not url:
+            continue
+        u = urlparse(url)
+        try:
+            urllib.request.urlopen(f"{u.scheme}://{u.netloc}{path}", timeout=3).read(1)
+            out[name] = True
+        except urllib.error.HTTPError:
+            out[name] = True
+        except (OSError, ValueError):
+            out[name] = False
+    return out
+
+
 @st.fragment(run_every=30)
-def server_pill(fallback=()):
-    """GPU server status, checked at startup and every 30 s: grey when offline, amber when this case's answers came
-    from a fallback provider, else cyan."""
-    if "ollama" not in llm.PROVIDERS:
-        md('<span class="pill" style="--c:#64748B"><i>○</i>GPU server: not configured</span>')
-        return
-    up, ms = llm.ping()
-    text, c, icon = (("offline", "#64748B", "○") if not up else (f"online · {ms} ms · fallback used: {', '.join(fallback)}",
-                     "#F2B544", "◑") if fallback else (f"online · {ms} ms", "#4FD1C5", "●"))
-    md(f'<span class="pill" style="--c:{c}" title="Model server for the semantic checks"><i>{icon}</i>GPU {e(llm.host("ollama"))} · '
-       f'{e(text)}</span>')
+def status_pill():
+    """System online (green) when every configured service answers, degraded (amber) when some do, offline (grey).
+    Icon and words carry the state too, not only the colour; host names only outside public mode."""
+    sv = services()
+    up = [k for k, v in sv.items() if v]
+    if sv and len(up) == len(sv):
+        c, icon, text = "#4ADE80", "●", "System online"
+    elif up:
+        c, icon, text = "#F2B544", "◑", "System degraded · " + ", ".join(k for k, v in sv.items() if not v) + " offline"
+    else:
+        c, icon, text = "#64748B", "○", "System offline" + ("" if sv else " · no services configured")
+    tip = "; ".join(f"{k}: {'online' if v else 'offline'}" for k, v in sv.items())
+    if not PUBLIC and "ollama" in llm.PROVIDERS:
+        tip += f" · GPU host {llm.host('ollama')}"
+    md(f'<span class="pill" style="--c:{c}" title="{e(tip)}"><i>{icon}</i>{e(text)}</span>')
+
+
+def topbar(page):
+    with st.container(key="topbar", horizontal=True, vertical_alignment="center"):
+        md(f'<nav class="crumb" aria-label="Breadcrumb"><span class="muted">Workspace</span> / <b>{e(page)}</b></nav>')
+        status_pill()
+        if PUBLIC:
+            md('<span class="pill" style="--c:#7AA2F7"><i>◇</i>Demo environment</span>')
 
 
 def when(ts):
@@ -366,6 +401,7 @@ def when(ts):
 def open_case(cid):
     qp.clear()
     qp["case"] = cid
+    ss["page"] = "Overview"
 
 
 known = [d.name for d in case_dirs()]
@@ -373,21 +409,46 @@ pick = qp.get("case") or (known[0] if known else "new")
 if pick != "new" and not (CASES / pick / "result.json").exists() and not (ss.get("job", {}).get("case") == pick):
     pick = "new"
 
+def nav_page():
+    p = ss.get("page") or qp.get("page")
+    return p if p in PAGES else "Overview"
+
+
 with st.sidebar:
     job = ss.get("job")
-    server_pill(() if pick == "new" or pick not in known else tuple(llm.fallback_used(Case(pick).entries())))
-    md('<h2 style="margin:10px 0 0">🔎 TruthLens</h2><div class="muted small" style="margin-bottom:6px">Multimodal forensic workbench</div>')
-    if st.button("＋ New case", type="primary" if pick == "new" else "secondary", width="stretch"):
-        open_case("new")
-        st.rerun()
-    if job and not job.get("done"):
-        md(f'<div class="small" style="margin:6px 0">⏳ Analyzing {e(job["case"])}…</div>')
-        if pick != job["case"] and st.button("Back to the running analysis", width="stretch"):
+    md('<div class="brand"><span class="logo" aria-hidden="true">T</span><div><b>TruthLens</b>'
+       '<div class="muted tiny">Forensic workbench</div></div></div>')
+    md('<div class="side-h">Workspace</div>')
+    cur = "Calibration" if nav_page() == "Calibration" else "New analysis" if pick == "new" else nav_page()
+    with st.container(key="nav"):
+        for n, icon in zip(PAGES, ("◫", "≣", "◎", "◔", "⛓")):
+            off = pick == "new" and n not in ("Overview", "Calibration") and not known
+            if st.button(f"{icon}  {n}", key=f"nav_{n}", type="primary" if n == cur else "tertiary", width="stretch",
+                         disabled=off, help="Open a case first" if off else None):
+                if pick == "new" and n != "Calibration" and known:
+                    open_case(known[0])
+                ss["page"] = n
+                qp["page"] = n
+                st.rerun()
+    if pick != "new":
+        running = bool(job and job["case"] == pick and not job.get("done"))
+        m = (case_meta(pick, mtime(pick)) if pick in known else
+             {"files": [p.name for p in Case(pick).evidence()], "headline": "", "ts": time.time()})
+        dot, st_txt = (("#F2B544", "◑ Analysing") if running else ("#64748B", "– Failed") if m["headline"].startswith("Failed")
+                       else ("#4ADE80", "● Active case"))
+        name = m["files"][0] if m["files"] else pick
+        md(f'<div class="side-h">Current case</div><div class="casecard"><div class="small" style="color:{dot}">{st_txt}</div>'
+           f'<div class="nm">{e(name)}</div><div class="mono tiny muted">{e(pick)}</div>'
+           f'<div class="tiny muted">{len(m["files"])} media {"file" if len(m["files"]) == 1 else "files"} · '
+           f'{time.strftime("%d %b %Y", time.localtime(m["ts"]))}</div></div>')
+    if job and not job.get("done") and pick != job["case"]:
+        md(f'<div class="small" style="margin:6px 0">⏳ Analysing {e(job["case"])}…</div>')
+        if st.button("Back to the running analysis", width="stretch"):
             open_case(job["case"])
             st.rerun()
-    md('<div class="muted tiny" style="margin:14px 0 6px;letter-spacing:.08em">CASES · NEWEST FIRST</div>')
+    md('<div class="side-h">Cases · newest first</div>')
     if not known:
-        md('<div class="muted small">No cases yet. Start with “New case”.</div>')
+        md('<div class="muted small">No cases yet. Start with “New analysis”.</div>')
     for cid in known:
         m = case_meta(cid, mtime(cid))
         c1, c2 = st.columns([1, 3], vertical_alignment="center")
@@ -405,13 +466,14 @@ with st.sidebar:
     with st.expander("What do these terms mean?"):
         md("".join(f'<div class="small" style="margin-bottom:6px"><b>{e(n)}</b> · <span class="muted">{e(d)}</span></div>'
                    for n, d in sorted(TERMS.values())))
-    st.caption("Automated indicators, not proof. A person reviews every finding.")
+    md(f'<div class="side-foot"><div>UNEX · InnovEdge 2026</div><div class="muted tiny">'
+       f'{"Public demo" if PUBLIC else "Local workspace"}</div></div>')
 
 
 # ---------- 1. upload ----------
 def upload_page():
     steps(0)
-    st.title("New case")
+    md('<h1 class="ph">New analysis</h1>')
     md('<div class="muted" style="margin:-6px 0 12px">Evidence is hashed (SHA-256) on arrival, stored read-only, and every step is logged.</div>')
     files = st.file_uploader("Drop evidence files here (several at once is fine)", accept_multiple_files=True)
     md('<div class="muted tiny" style="margin-top:-8px">Images: JPG, PNG, WebP, TIFF, BMP, GIF, AVIF, HEIC, JXL · Video: MP4, MOV, MKV, '
@@ -538,53 +600,175 @@ def live_progress():
 
 
 # ---------- 3. results ----------
-def overview(case, res, inds, a, tags):
+def check_media(c):
+    """Media row of a coverage check: "image analysis · x.jpg" -> image, "trained detector (audio)" -> audio, else cross."""
+    if " analysis · " in c:
+        k = c.split(" analysis · ")[0]
+        return k if k in MEDIA_ROWS else "cross"
+    if c.startswith("trained detector ("):
+        return c[len("trained detector ("):-1]
+    return {"transcript": "audio", "visual artifacts (model)": "image", "exif": "image", "lipsync": "video",
+            "face_region_flicker": "video"}.get(c, "cross")
+
+
+def verified(res, log):
+    """True only after an explicit re-hash (Verify) whose newest result is all ok, and the files still match now."""
+    v = [x for x in log if x["action"] == "verify"]
+    return (bool(v) and all(val == "ok" for k, val in v[-1].items() if k not in ("ts", "action"))
+            and all(res["integrity"].values()))
+
+
+def kpi(label, value, sub="", chip=""):
+    return (f'<div class="kpi"><div class="k">{e(label)}</div><div class="v">{value}</div>'
+            + (f'<div class="chips">{chip}</div>' if chip else "") + (f'<div class="s">{sub}</div>' if sub else "") + "</div>")
+
+
+def first_sentence(t):
+    """Up to the first ". " that is outside quotes (a quoted caption may contain full stops)."""
+    for m in re.finditer(r"\. ", t):
+        head = t[:m.start()]
+        if head.count('"') % 2 == 0 and head.count("'") % 2 == 0:
+            return head + "."
+    return t
+
+
+def cap(t):
+    return t[:1].upper() + t[1:]
+
+
+def footer():
+    md('<div class="foot"><span>TRUTHLENS · UNEX · INNOVEDGE 2026</span><span>Automated indicators, not proof.</span></div>')
+
+
+def export_button(case, key):
+    log_size = case.log_path.stat().st_size if case.log_path.exists() else 0
+    if st.download_button("Export report", report_html(case.id, mtime(case.id), log_size), f"{case.id}.html", "text/html",
+                          width="stretch", key=key, help="Self-contained HTML; print it to PDF from the browser"):
+        case.log("report_export", format="html")
+
+
+def overview(case, res, inds, a, tags, log):
+    files = [p.name for p in case.evidence()]
+    c1, c2 = st.columns([3, 2], vertical_alignment="bottom")
+    c1.markdown('<h1 class="ph">Forensic overview</h1><div class="muted">Your evidence, findings and case integrity in one place.'
+                '</div>', unsafe_allow_html=True)
+    with c2:
+        b1, b2 = st.columns(2)
+        if b1.button("＋ New analysis", type="primary", width="stretch", key="new_top"):
+            open_case("new")
+            st.rerun()
+        with b2:
+            export_button(case, "exp_top")
+    if until := public_expiry(case):
+        md(f'<div class="panel small warn">This case will be deleted on {e(until)}.</div>')
+    for w in llm.server_warnings(log):
+        st.warning(w, icon="⏳" if w.startswith("GPU server busy") else "📡")
+    cov = res["coverage"]
+    failed = res["headline"].startswith(("Not analysed", "Failed"))
+    n_ok = sum(1 for f in cov.get("files", {}).values() if f["analysed"])
+    state = "failed" if res.get("failed") else "all analysed" if n_ok >= len(files) else f"{len(files) - n_ok} not analysed"
+    counted = [i for i in inds if fusion.calibrated(i) and fusion.contribution(i) > 0]
+    pairs = list(cal.get("detectors", {}).values()) if cal else []
+    n_cal = sum(1 for d in pairs if d.get("weight", 0) > 0)
+    bad = [f for f, v in res["integrity"].items() if not v]
+    with st.container(key="kpis"):
+        k1, k2, k3, k4 = st.columns(4)
+        k1.markdown(kpi("Media analysed", f"{len(files)}", e(f"{'file' if len(files) == 1 else 'files'} · {state}")),
+                    unsafe_allow_html=True)
+        k2.markdown(kpi("Evidence findings", f"{len(inds)}", "",
+                        f'<span class="chip" style="--c:#F2B544">{len(counted)} count toward the label</span>'), unsafe_allow_html=True)
+        k3.markdown(kpi("Calibrated checks", f"{n_cal}", e(f"of {len(pairs)} check/media pairs with a measured weight, "
+                                                          "across media types")), unsafe_allow_html=True)
+        with k4:
+            if bad:
+                md(kpi("Integrity status", '<span style="color:#F97352">✗ Mismatch</span>', e(", ".join(bad))))
+            elif verified(res, log):
+                md(kpi("Integrity status", '<span style="color:#4FD1C5">✓ Verified</span>', "",
+                       '<span class="chip" style="--c:#4FD1C5">SHA‑256 match</span>'))
+            else:
+                md(kpi("Integrity status", "Not verified", "re-hash the evidence against its intake SHA‑256"))
+                if st.button("Verify", key="kpi_verify", width="stretch"):
+                    v = case.verify()
+                    case.log("verify", **{k: ("ok" if good else "MISMATCH") for k, good in v.items()})
+                    st.rerun()
     creds = report.content_credentials(case, inds)
     ss["_creds"] = bool(creds)
-    for c in creds:
-        md(f'<div class="prov" role="note">🔏 {e(c)}</div>')
-    label_hero(res, inds, a)
-    cov = res["coverage"]
-    if not res["headline"].startswith(("Not analysed", "Failed")):
-        md(f'<div class="panel small cov">{e(coverage_html(cov))}'
-           + "".join(f'<div class="muted" style="margin-top:4px">→ {e(h)}</div>' for h in hints(cov["not_run"].values())) + "</div>")
-    if res["headline"].startswith(("Not analysed", "Failed")):
-        md('<div class="panel small">→ Next step: start a <b>New case</b> with the same file'
-           + (f' (the cause is {e(res["failed"].split("(bug ")[-1].rstrip(")"))}).' if "(bug fixed" in (res.get("failed") or "") else ".")
-           + " Its evidence and custody log stay here.</div>")
-        with st.expander("Details"):
-            st.code(res.get("failed") or cov.get("why") or "")
-        return
-    top = [(t, i) for t, i in tags if fusion.contribution(i) > 0][:3]
-    md(f'<h3 style="margin:18px 0 8px">Top evidence tags</h3>')
-    if not top:
-        md('<div class="panel muted">No finding counts toward the label. Findings that were observed but not counted are under '
-           '<b>All findings</b>. No indicators does not show the media is unaltered.</div>')
-    for t, i in top:
-        c1, c2 = st.columns([7, 1], vertical_alignment="center")
-        with c1:
-            tag_card(t, i)
-        if c2.button("Show me", key=f"show_{t}", help=f"Open {t} in the evidence viewer", width="stretch"):
-            ss[f"tab_{case.id}"] = "Evidence"
-            ss["focus"] = {"case": case.id, "tag": t, "file": i.file if i.file != "context" else None}
-            ss["_scroll"] = True
-            st.rerun()
+    left, right = st.columns([3, 2])
+    with left:
+        md('<div class="card-h">Case assessment</div>')
+        for c in creds:
+            md(f'<div class="prov" role="note">🔏 {e(c)}</div>')
+        label_hero(res, inds, a)
+        if failed:
+            md('<div class="panel small">→ Next step: start a <b>New analysis</b> with the same file'
+               + (f' (the cause is {e(res["failed"].split("(bug ")[-1].rstrip(")"))}).' if "(bug fixed" in (res.get("failed") or "")
+                  else ".") + " Its evidence and custody log stay here.</div>")
+            if not PUBLIC:
+                with st.expander("Details"):
+                    st.code(res.get("failed") or cov.get("why") or "")
+    with right:
+        md('<div class="card-h">Analysis coverage</div>')
+        allc = {c: None for c in cov["ran"]} | cov["not_run"]
+        rows = []
+        for m, name in MEDIA_ROWS.items():
+            mine = [c for c in allc if check_media(c) == m]
+            if not mine:
+                continue
+            ran = sum(1 for c in mine if c not in cov["not_run"])
+            rows.append(f'<div class="covrow"><span>{name}</span><span class="mono">{ran} / {len(mine)} checks</span>'
+                        f'<div class="bar" role="progressbar" aria-valuenow="{ran}" aria-valuemin="0" aria-valuemax="{len(mine)}" '
+                        f'aria-label="{name}: {ran} of {len(mine)} checks run"><i style="width:{100 * ran / len(mine):.0f}%"></i>'
+                        f'</div></div>')
+        why = [f"{cap(check_name(c))}: {short_reason(w)}" for c, w in cov["not_run"].items()]
+        md('<div class="panel">' + "".join(rows)
+           + ('<div class="small muted" style="margin-top:10px"><b>Not run</b>' + "".join(f"<div>· {e(w)}</div>" for w in why)
+              + "</div>" if why else '<div class="small muted" style="margin-top:10px">Every applicable check ran.</div>')
+           + "".join(f'<div class="small muted" style="margin-top:4px">→ {e(h)}</div>' for h in hints(cov["not_run"].values()))
+           + "</div>")
+    h1, h2 = st.columns([4, 1], vertical_alignment="bottom")
+    h1.markdown('<div class="card-h">Recent evidence findings</div>', unsafe_allow_html=True)
+    if h2.button("View all →", width="stretch", key="viewall"):
+        go("Analysis")
+    errs = [x for x in log if x["action"] == "analyzer_error"]
+    rows = tags[:5]
+    if not rows and not errs:
+        md('<div class="panel muted">No findings for this case. No indicators does not show the media is unaltered.</div>')
+    for t, i in rows:
+        cnt = fusion.calibrated(i) and fusion.contribution(i) > 0
+        with st.container(key=f"frow_{t}"):
+            r1, r2 = st.columns([6, 1], vertical_alignment="center")
+            r1.markdown(f'<div class="frow"><span class="tagno mono">{t}</span><div><b>{e(cap(term(i.type)[0]))}</b>'
+                        f'<div class="small muted">{e(i.modality)} · {e(first_sentence(i.explanation))}</div></div></div>',
+                        unsafe_allow_html=True)
+            if r2.button("◑ Review" if cnt else "◇ Inspect", key=f"{'act_review' if cnt else 'act_inspect'}_{t}", width="stretch",
+                         help=("Counted in the label" if cnt else cap(fusion.UNCALIBRATED)) + f". Opens {t} in the evidence viewer."):
+                ss["focus"] = {"case": case.id, "tag": t, "file": i.file if i.file != "context" else None}
+                go("Evidence viewer")
+    for n, x in enumerate(errs[:max(0, 5 - len(rows))]):
+        with st.container(key=f"frow_err{n}"):
+            r1, r2 = st.columns([6, 1], vertical_alignment="center")
+            r1.markdown(f'<div class="frow"><span class="tagno mono">–</span><div><b>{e(cap(x["analyzer"].rsplit(".", 1)[-1]))} '
+                        f'analysis</b><div class="small muted">{e(x["file"])} · the check failed; the case continued without it'
+                        f'</div></div></div>', unsafe_allow_html=True)
+            r2.markdown('<span class="act failed">– Failed</span>', unsafe_allow_html=True)
+    footer()
+
+
+def analysis_page(case, res, inds, tags, not_run):
+    md('<h1 class="ph">Analysis</h1><div class="muted">Summary, cross-media links and every finding of this case.</div>')
     c1, c2 = st.columns([3, 2])
     with c1:
         checks = report.human_checks(inds)[:5]
-        md('<div class="panel"><b>Recommended human checks</b><ol style="margin:6px 0 0 18px">'
+        md('<div class="card-h">Recommended human checks</div><div class="panel"><ol style="margin:0 0 0 18px">'
            + ("".join(f"<li>{e(c)}</li>" for c in checks) or "<li>Spot-check the original files yourself.</li>") + "</ol></div>")
     with c2:
-        md('<div class="panel"><b>Summary</b> <span class="muted tiny">written from the findings only</span><div class="small" '
-           f'style="margin-top:6px">{e(report.summary(res, case))}</div></div>')
-    bad = [f for f, ok in res["integrity"].items() if not ok]
-    c1, c2 = st.columns([3, 1], vertical_alignment="center")
-    c1.markdown(f'<div class="small {"" if not bad else "panel bad"}">' + (f"✗ Integrity check FAILED: {e(', '.join(bad))}" if bad else
-                f"✓ Integrity: all {len(res['integrity'])} evidence file(s) match their intake SHA-256.") + "</div>", unsafe_allow_html=True)
-    log_size = case.log_path.stat().st_size if case.log_path.exists() else 0
-    if c2.download_button("Export report", report_html(case.id, mtime(case.id), log_size), f"{case.id}.html", "text/html",
-                          type="primary", width="stretch", help="Self-contained HTML; print it to PDF from the browser"):
-        case.log("report_export", format="html")
+        md('<div class="card-h">Summary <span class="muted tiny">written from the findings only</span></div>'
+           f'<div class="panel small">{e(report.summary(res, case))}</div>')
+    md('<div class="card-h">Cross-media</div>')
+    safe(lambda: cross_tab(inds, tags, not_run), "cross-media view")
+    md('<div class="card-h">All findings</div>')
+    safe(lambda: findings_tab(case, inds, tags, res["coverage"]), "findings list")
+    footer()
 
 
 def evidence_tab(case, res, inds, tags, log):
@@ -905,10 +1089,11 @@ def findings_tab(case, inds, tags, cov):
 
 
 def custody_tab(case, res, log):
-    custody_stamp(case, log, res["integrity"])
+    md('<h1 class="ph">Chain of custody</h1><div class="muted">Every step logged, every file hashed on arrival.</div>')
+    custody_stamp(case, log, res)
     c1, c2 = st.columns([3, 2])
     with c1:
-        md("<h4>Chain of custody</h4>")
+        md("<h4>Custody log</h4>")
         colors = {"ingest": "#4FD1C5", "analyzed": "#A3B18A", "llm_call": "#BB9AF7", "check_not_run": "#64748B",
                   "assessed": "#F2B544", "analyzer_error": "#F97352", "analysis_failed": "#F97352", "verify": "#4FD1C5",
                   "report_export": "#4FD1C5"}
@@ -924,16 +1109,17 @@ def custody_tab(case, res, log):
         if st.button("Verify integrity now", type="primary"):
             v = case.verify()
             case.log("verify", **{k: ("ok" if ok else "MISMATCH") for k, ok in v.items()})
-            md("".join(f'<div class="mono small">{"✓" if ok else "✗"} {e(k)} · {sha256(case.dir / "evidence" / k)[:16]}…</div>'
-                       for k, ok in v.items()))
+            st.rerun()
         with st.expander("Full SHA-256 hashes (copy)"):
             for x in log:
                 if x["action"] == "ingest":
                     st.code(f'{x["sha256"]}  {x["file"]}', language=None)
-        st.caption("Export the report from the overview. For PDF: open the HTML report and print → Save as PDF.")
+        export_button(case, "exp_custody")
+        st.caption("For PDF: open the HTML report and print → Save as PDF.")
 
 
 def calibration_tab():
+    md('<h1 class="ph">Calibration</h1><div class="muted">How each check was measured, and what is not counted yet.</div>')
     if not cal:
         md('<div class="panel bad">No calibration loaded. Run <code>python calibrate.py</code> on the labelled test set; until '
            "then every weight is 0 and labels are not meaningful.</div>")
@@ -1004,37 +1190,46 @@ def server_model_card():
     return llm.model_card()
 
 
-def results_page(case):
+def go(page):
+    ss["page"] = page
+    qp["page"] = page
+    ss["_scroll"] = True
+    st.rerun()
+
+
+def results_page(case, page):
     res = load(case.id, mtime(case.id))
     inds, a, log = res["indicators"], res["assessment"], case.entries()
     tags = report.tagged(inds)
     not_run = {x["check"]: x["reason"] for x in log if x["action"] == "check_not_run"}
-    steps(2)
-    files = [p.name for p in case.evidence()]
-    md(f'<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:4px"><h1 style="margin:0;font-size:1.9rem">'
-       f'{e(case.id)}</h1>{pill(res["headline"])}</div><div class="muted small" style="margin-bottom:12px;overflow-wrap:anywhere">'
-       + " · ".join(e(f) for f in files) + "</div>")
-    for w in llm.server_warnings(log):
-        st.warning(w, icon="⏳" if w.startswith("GPU server busy") else "📡")
-    safe(lambda: overview(case, res, inds, a, tags), "overview")
-    md('<div id="tabs" style="height:4px"></div>')
-    key = f"tab_{case.id}"
-    if key not in ss:
-        ss[key] = qp.get("tab") if qp.get("tab") in TABS else "Evidence"
-    tab = st.segmented_control("View", TABS, key=key, label_visibility="collapsed") or "Evidence"
-    if ss.pop("_scroll", False):
-        st.iframe("<script>window.parent.document.getElementById('tabs').scrollIntoView({behavior:'smooth'})</script>", height=1)
-    {"Evidence": lambda: safe(lambda: evidence_tab(case, res, inds, tags, log), "evidence view"),
-     "Cross-media": lambda: safe(lambda: cross_tab(inds, tags, not_run), "cross-media view"),
-     "All findings": lambda: safe(lambda: findings_tab(case, inds, tags, res["coverage"]), "findings list"),
-     "Custody": lambda: safe(lambda: custody_tab(case, res, log), "custody view"),
-     "Calibration": lambda: safe(calibration_tab, "calibration view")}[tab]()
+    if page == "Analysis":
+        analysis_page(case, res, inds, tags, not_run)
+    elif page == "Evidence viewer":
+        md('<h1 class="ph">Evidence viewer</h1>')
+        safe(lambda: evidence_tab(case, res, inds, tags, log), "evidence view")
+        footer()
+    elif page == "Chain of custody":
+        safe(lambda: custody_tab(case, res, log), "custody view")
+        footer()
+    else:
+        safe(lambda: overview(case, res, inds, a, tags, log), "overview")
 
 
+def public_expiry(case):
+    return None
+
+
+page = "Calibration" if nav_page() == "Calibration" else "New analysis" if pick == "new" else nav_page()
+topbar(page)
+if ss.pop("_scroll", False):
+    st.iframe("<script>window.parent.document.querySelector('[data-testid=stMain]').scrollTo(0, 0)</script>", height=1)
 job = ss.get("job")
-if pick == "new":
+if page == "Calibration":
+    safe(calibration_tab, "calibration view")
+    footer()
+elif pick == "new":
     upload_page()
 elif job and job["case"] == pick:
     analyzing_page(job)
 else:
-    results_page(Case(pick))
+    results_page(Case(pick), page)
