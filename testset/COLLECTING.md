@@ -27,6 +27,10 @@ Cloning or animating a person needs that person's **explicit, written agreement*
 may be cloned or animated. Never public figures, never people who did not agree. Note the agreement (who, date) in the Drive
 folder README. Delete the files if anyone withdraws.
 
+The `ph_vid_face_real_*`, `ph_vid_ai_*` and `ph_aud_clone_*` placeholders are smoke-test material only:
+`calibrate.py` skips them (they trip older detectors for synthetic reasons), so these categories have **no calibration
+data until real files are added**.
+
 ## What the `cloned_voice` / `ai_video` rows test
 `synthetic_bandlimit` (hard cutoff), `synthetic_silence` (too-clean pauses, no breaths), `synthetic_prosody` (flat pitch and
 loudness), `lipsync_mismatch` (mouth motion vs speech) and `face_region_flicker`, plus the image checks on 3 keyframes.

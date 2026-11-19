@@ -126,6 +126,12 @@
   perfection; they still trip temporal_spike / audio_click (only the mouth moves; abrupt synthetic syllables).
 - Summary call: max 600 tokens and only the 20 strongest findings (it overflowed 300 tokens on a busy case).
 - Calibration not re-run: the new types weigh 0 until measured on real cloned voices / AI video.
+- **Smoke-test-only placeholders** (`calibrate.SMOKE_ONLY`: `ph_vid_face_real_*`, `ph_vid_ai_*`, `ph_aud_clone_*`) are
+  excluded from calibration and listed in its output and in calibration.json (`excluded_smoke_only`): they trip older
+  detectors for synthetic reasons (cartoons: temporal_spike 1.0 / ela_hotspot; gated clones: audio_click ~0.4).
+  The current calibration.json predates them, so it is unaffected. Still in calibration, though also synthetic: the
+  testsrc2 placeholder videos (`ph_vid_real/voice/wrongdate_*`) fire noise_inconsistency up to 1.0; excluding them
+  would leave no video rows at all, so they stay until real clips replace them.
 
 ## Module map
 | File | Role |

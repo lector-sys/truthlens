@@ -251,7 +251,8 @@ def main():
         add(f"ph_img_ai_up_{i:02d}.png", png_params(upsampled(), text=None), "manipulated", "ai_generated", LIB.format(D),
             generator="ph-upsample")
 
-    # cloned_voice / ai_video stand-ins (and untouched talking heads to compare with), last for the same reason
+    # cloned_voice / ai_video stand-ins (and untouched talking heads to compare with), last for the same reason.
+    # Smoke-test only: calibrate.py excludes them (SMOKE_ONLY) because they trip older detectors for synthetic reasons.
     T = 'Statement recorded 2026-11-12. She said "the venue is closed"'
     for i in range(1, 3):
         add(f"ph_aud_clone_{i:02d}.wav", lambda p, i=i: cloned_voice(p, seed=i), "manipulated", "cloned_voice", T,

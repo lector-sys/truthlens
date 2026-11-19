@@ -17,6 +17,17 @@ GENERATED = ("ai_generated", "cloned_voice", "ai_video")  # rows must name the t
 MANIPULATIONS = {"none", "splice", "copy_move", "ai_generated", "cloned_voice", "ai_video", "video_cut", "voice_clone", "audio_splice",
                  "wrong_caption", "wrong_date", "wrong_quote"}
 CASES = {"", "demo1", "demo2", "demo3"}
+# Smoke-test-only placeholders: they trip older detectors for synthetic reasons (drawn talking cartoons: only the mouth
+# moves -> temporal_spike / ela_hotspot; digitally gated cloned voices: hard gate steps -> audio_click). They exercise the
+# lip-sync / synthetic-speech code paths in test_smoke.py and are never calibration data.
+SMOKE_ONLY = ("ph_vid_face_real_", "ph_vid_ai_", "ph_aud_clone_")
+
+
+def smoke_only(rows):
+    """-> (calibration rows, excluded smoke-test-only rows)."""
+    return [r for r in rows if not r["file"].startswith(SMOKE_ONLY)], [r for r in rows if r["file"].startswith(SMOKE_ONLY)]
+
+
 IMAGES = (".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif", ".avif", ".heic", ".heif", ".jxl", ".jp2")
 
 
@@ -116,7 +127,10 @@ def table(rec):
 
 
 def run(argv=()):
-    rows = list(csv.DictReader(open(ROOT / "labels.csv", encoding="utf-8")))
+    rows, skipped = smoke_only(list(csv.DictReader(open(ROOT / "labels.csv", encoding="utf-8"))))
+    if skipped:
+        print(f"excluded {len(skipped)} smoke-test-only placeholder rows (trip older detectors for synthetic reasons, "
+              f"see SMOKE_ONLY): {', '.join(r['file'] for r in skipped)}")
     for p in check(rows):
         print("label problem:", p)
     bad = {r["file"] for r in rows if check([r])}
@@ -163,6 +177,7 @@ def run(argv=()):
     git = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     rec = {"dataset": "SYNTHETIC" if synthetic else "REAL", "n": len(results), "n_calibration": len(cal),
            "n_held_out": len(held), "date": datetime.date.today().isoformat(), "git": git or "?",
+           "excluded_smoke_only": [r["file"] for r in skipped],
            "detectors": det, "weights": weights, "held_out": evaluate(held, weights)}
     fusion.CALIBRATION.write_text(json.dumps(rec, indent=1), encoding="utf-8")
     print("\n" + table(rec) + f"\n\nWrote {fusion.CALIBRATION.name}; fusion.py loads its weights automatically.")

@@ -81,6 +81,9 @@ try:
     det = calibrate.fit(rs)
     assert (det["ela_hotspot"]["hits"], det["ela_hotspot"]["false_alarms"], det["ela_hotspot"]["weight"]) == (1, 1, 0.0)  # 0.1 < FIRE: not counted
     assert det["copy_move"]["weight"] == 0.3 and det["copy_move"]["precision"][0] == 1.0
+    keep, skip = calibrate.smoke_only([{"file": "ph_vid_ai_late_01.mp4"}, {"file": "ph_aud_clone_01.wav"},
+                                       {"file": "ph_vid_face_real_02.mp4"}, {"file": "ph_img_real_01.jpg"}])
+    assert [r["file"] for r in keep] == ["ph_img_real_01.jpg"] and len(skip) == 3
     p, lo, hi = calibrate.wilson(15, 15)
     assert p == 1 and 0.79 < lo < 0.80 and hi == 1  # "100%" of 15 is really 80-100%
     ev = calibrate.evaluate(rs, {"ela_hotspot": 0.9, "copy_move": 0.9})
