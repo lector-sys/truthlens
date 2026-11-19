@@ -61,15 +61,32 @@
   say "uncalibrated (not counted in label)" (cards, Findings table, report). Today that is `synthetic_visual_artifacts`
   (never fired on placeholders) and `exif_missing` (0.20 < the 0.25 firing threshold). No calibration file at all →
   reliability defaults, as before.
-- **60 s timeout on the .avif call, root cause**: the GPU server runs `truthlens-vl` one request at a time; the call
-  queued behind another client's generation (both it and the next call waited > 60 s, so the server was busy ≥ 2 min;
-  this laptop's calls were sequential). Not the image (sent 600x400, 56 KB, 1,552 prompt tokens; 1024 px cap already
-  applies after conversion) and not output length (7 tokens; idle 0.5-3 s). Reproduced: 0.5 s call → 46.6 s behind a
-  2,500-token generation. Fix: Ollama now goes through its native /api/chat so every call logs `queue_s`, `load_s`,
-  `prefill_s`, `gen_s`, tokens and image size; failed attempts log `llm_attempt_failed`; artifact list capped at 5
-  (prompt v2) within the 300-token cap; one retry kept. Server-side options are in `docs/SERVER_SETUP.md` (not applied).
-- `c2patool` is not installed here; `docs/SERVER_SETUP.md` has install steps for the official release (v0.27.23). The
-  c2patool output parser is untested against a real manifest.
+- **60 s timeout on the .avif call (corrected)**: a network/connection stall, *not* queueing. The home PC's Ollama log
+  (19:30-19:46) shows every request came from this laptop, none took > 5 s, and nothing reached the server between 18:19
+  and 19:36: the two calls that timed out (visual artifacts, then summary) never arrived. At the time Ollama was called
+  through the openai SDK's shared, pooled client (60 s read timeout, timeouts not retried), so a dead pooled connection
+  or a stalled Tailscale path would hang the full 60 s; which of the two can't be told from the data we have. An
+  earlier note here blamed "another client's generation": that was wrong. The 46.6 s / 2,500-token measurement was my
+  own reproduction test (19:44:19 in the server log); it shows how queueing behaves, it is not what happened.
+  Image size (600x400, 56 KB) and output length (7 tokens) were never the issue.
+- **Client-side timing + faster retry (after the correction)**: every GPU-server call (Ollama and whisper) goes through
+  `llm._post`: a fresh connection per attempt (never pooled), connect timeout 3 s, time-to-first-byte 20 s for model
+  calls (whisper: 30 s + audio length), 60 s for any later read. Each call logs `connect_s`, `ttfb_s`, `total_s`
+  (client) next to `queue_s`, `load_s`, `prefill_s`, `gen_s` (server). A failure is logged as `llm_attempt_failed` with
+  `network: true` and the `stage` it stalled at (connect / first byte / read), then retried once on a new connection.
+  Live (demo2 media): connect 0.06-0.14 s, first byte 1.3-8.2 s (caption vs 3 frames is the slowest), queue ≤ 0.13 s.
+  Caveat: with the 20 s limit, a call queued > 20 s behind a real job would show as "didn't respond" and be retried.
+- **c2patool 0.27.23 installed on the laptop** (official contentauth/c2pa-rs Windows release, sha256 checked against
+  GitHub's digest) in `%LOCALAPPDATA%\Programs\c2patool\c2patool`, on the user PATH and as `C2PATOOL` in `.env`.
+  Install steps: README *Setup -> c2patool*. The parser follows c2patool's `validation_state`: Valid = "verified ...
+  signature and content hashes valid, signed by <issuer> (signer not checked against a trust list)", Trusted = "... on
+  the trust list", else "failed verification (<codes>)". Tested with its test certificate (valid + one flipped byte ->
+  `assertion.dataHash.mismatch`); a real ChatGPT original is still to be tested.
+- Dashboard warnings (`llm.server_warnings`), two kinds: "GPU server busy, waited X s" only when the *server* reports
+  `queue_s` > 5 s; "GPU server didn't respond (network), retried" when the client gave up (stage + seconds shown).
+  Smoke-tested with a local socket that accepts but never answers (given up at first byte, retried on a 2nd connection).
+- No other process on the laptop calls the GPU server (checked 19:5x: only the dashboard; no connections to it).
+  Consistent with the server log: this laptop is the only client.
 
 ## Module map
 | File | Role |

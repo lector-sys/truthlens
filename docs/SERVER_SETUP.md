@@ -1,4 +1,4 @@
-# Setup: GPU server and local tools
+# Setup: GPU server
 
 TruthLens runs on the team laptop. Model calls go to the team's GPU server over Tailscale; everything else runs locally.
 
@@ -6,34 +6,16 @@ TruthLens runs on the team laptop. Model calls go to the team's GPU server over 
 - Ollama (`truthlens-vl`) and the whisper.cpp server, at `OLLAMA_URL` / `WHISPER_URL` in `.env` (see `.env.example`).
 - The laptop must be on the tailnet: `tailscale status` should list the server as online.
 - Health: the dashboard header pill pings `/api/tags` every 30 s.
-- **One request at a time.** Ollama runs `truthlens-vl` one request at a time, so a call made while anyone else is
-  generating waits for them (measured: a 0.5 s call took 46.6 s behind a 2,500-token generation). Each `llm_call` in a
-  case log records `queue_s` (time spent waiting), `load_s`, `prefill_s`, `gen_s`, tokens and the image size sent. A call
-  still times out after 60 s and is retried once (`llm_attempt_failed` in the log). If `queue_s` is often large, the
-  server owner can set `OLLAMA_NUM_PARALLEL=2` (needs extra VRAM per parallel slot) or keep other jobs off the server
-  while cases run.
+- **One request at a time.** Ollama runs `truthlens-vl` one request at a time, so a call made while another job is
+  generating waits for it (test: a 0.5 s call took 46.6 s behind a 2,500-token generation). The dashboard shows
+  "GPU server busy, waited X s" when the server reports more than 5 s of `queue_s`. If that becomes common, the server
+  owner can set `OLLAMA_NUM_PARALLEL=2` (extra VRAM per slot) or keep other jobs off the server while cases run.
+- **Network stalls.** A request can also stall before it reaches the server (what caused the one 60 s timeout seen so
+  far). Each attempt uses a fresh connection with a 3 s connect timeout and a 20 s time-to-first-byte limit (whisper:
+  30 s + audio length), and is retried once. The dashboard then shows "GPU server didn't respond (network), retried".
+- **What each call logs** (case log, `llm_call`): client side `connect_s`, `ttfb_s`, `total_s`; server side `queue_s`,
+  `load_s`, `prefill_s`, `gen_s`, tokens; the image size sent. Failed attempts: `llm_attempt_failed` with `network`,
+  `stage` (connect / first byte / read) and the same client timings.
 
-## c2patool (optional, for verified C2PA manifests)
-Without it, TruthLens detects C2PA manifests by scanning the file's bytes and reports them as
-"C2PA manifest present (not verified)". With `c2patool` on PATH it reads and validates the manifest instead
-(`image._c2patool`): the claim generator, the declared digital source type, and any validation failures.
-
-Use the official release from the Content Authenticity Initiative (`contentauth/c2pa-rs`, tags `c2patool-v*`;
-v0.27.23 at the time of writing):
-
-**Windows (PowerShell)**
-```powershell
-$v = "c2patool-v0.27.23"   # or the newest c2patool-v* tag on https://github.com/contentauth/c2pa-rs/releases
-gh release download $v -R contentauth/c2pa-rs -p "*x86_64-pc-windows-msvc.zip" -D "$env:TEMP\c2patool"
-Expand-Archive "$env:TEMP\c2patool\$v-x86_64-pc-windows-msvc.zip" "$env:LOCALAPPDATA\Programs\c2patool" -Force
-# add the folder that contains c2patool.exe to your user PATH, then open a new terminal:
-[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:LOCALAPPDATA\Programs\c2patool", "User")
-c2patool --version
-```
-(No `gh`? Download the same `...-x86_64-pc-windows-msvc.zip` from the releases page in a browser.)
-
-**Linux / macOS**: the `...-x86_64-unknown-linux-gnu.tar.gz` / `...-universal-apple-darwin.zip` asset from the same
-release, unpacked onto PATH; or `cargo install c2patool`.
-
-Check it works: `c2patool some_image.jpg` prints the manifest store as JSON (or reports that there is none). Restart
-the dashboard afterwards; no TruthLens setting is needed.
+## Local tools
+c2patool (verified C2PA manifests) is installed on the laptop, not the server: see the README, *Setup → c2patool*.
