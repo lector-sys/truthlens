@@ -5,6 +5,13 @@
 - **API key**: `OPENAI_API_KEY` not set on D's machine, so Luna checks (caption↔image, caption↔frames, quote↔transcript, summary)
   have only been run against a mocked client. Confirm the Luna model id for `TRUTHLENS_MODEL`.
 
+## Status (2026-11-19, all phases built)
+- Phases 0-5 done and committed; `python test_smoke.py` OK (A/B/C detectors, mocked Luna, prompt injection, wording grep).
+- Demo cases on placeholders: demo1 **Moderate** (Strong expected once caption↔image runs with a key), demo2 **Strong** with
+  `av_aligned_flags` (picture jump 4.8 s ↔ audio splice 5.0 s), demo3 **No significant indicators**.
+- `calibration.json` is from the SYNTHETIC set (git-ignored; re-run `python calibrate.py` on real media).
+- Video frames' noise/ELA fire a lot on the test-pattern videos; expect calibration on real video to down-weight or not.
+
 ## Module map
 | File | Role |
 |---|---|
@@ -48,3 +55,10 @@ B and C must `git pull origin main` before more work. No force-pushes.
 | sha256 + source/licence columns in labels.csv | TASKS §5 fixed columns | `calibrate.py` validates the existing columns; provenance is in `COLLECTING.md` |
 | `docs/DEMO_SCRIPT.md` | DEMO.md already owns the script (D6) | DEMO.md updated with the 3-minute click path |
 | `get_keyframes(case, n=3)` | C5 already picks 3 frames from A4's artifacts | not added (would duplicate C5) |
+| SSE progress endpoint | §4.1 | `pipeline.run(progress=...)` drives `st.status` live per analyzer |
+| Browser-side SHA-256 before upload | Streamlit can't run page JS | Server hashes the upload bytes, then re-hashes the stored copy and shows ✓ match |
+| Light theme toggle | — | Streamlit's own Settings → Theme; the custom panels are tuned for dark; the HTML report is light |
+| j/k + Space keyboard shortcuts | Streamlit widgets | Not built; standard Tab/Enter keyboard navigation works |
+| Smoke grep bans "real" | Brief also wants a `REAL` dataset badge | Grep is case-sensitive: lowercase/Title-case banned, all-caps dataset tag allowed |
+| `scene_cuts(path)` | TASKS A6 signature | `scene_cuts(path, case)`, so a scenedetect failure is logged instead of crashing the video analyzer |
+| Playwright screenshots | §4.3 | Headless Edge via DevTools protocol (scratch script, not in repo); 12 PNGs in `docs/screenshots/` reviewed and fixed |

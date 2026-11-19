@@ -9,11 +9,29 @@ Lines in quotes are what to say. *Italics* are actions. Rehearse at least 3 time
 
 - [ ] Laptop on charger, Do Not Disturb on, browser zoom 125%, close all other tabs.
 - [ ] `$env:OPENAI_API_KEY` and `$env:TRUTHLENS_MODEL` set in the terminal that runs Streamlit.
-- [ ] `python test_smoke.py` → `OK`, then `streamlit run app.py` and leave it open.
+- [ ] `python test_smoke.py` → `OK`, then `python demo.py --fresh` once **online** (fills `cache/` with every Luna answer).
+- [ ] On stage run `python demo.py --offline`: zero API calls, identical output, opens on demo2's Cross-media screen.
 - [ ] Demo files ready in a folder on the desktop: `demo1_photo.jpg`, `demo2_clip.mp4`, `demo3_photo.jpg`, plus the 3 context texts in a notepad.
-- [ ] **Run all 3 cases once now**, download each HTML report and open them in browser tabs. These are your fallback if the network or API fails live.
+- [ ] Custody → *Export report (HTML)* for demo1-3 and open them in browser tabs: the fallback if the laptop app fails.
 - [ ] Backup screen-recording of the full demo on the desktop and on a phone.
 - [ ] Slide with the `calibrate.py` table (from the last calibration run) and the flowchart.
+
+## The 3-minute click path (dashboard)
+
+Judging point in **bold**; the click in *italics*.
+
+| Time | Screen | Say / show |
+|---|---|---|
+| 0:00 | *Sidebar → demo1 → Overview* | **Multi-media + calibrated**: "One label on a four-step scale, never fake or real. The bars say which findings drive it, score × measured weight." |
+| 0:30 | *Evidence*, toggle *Noise map*, drag *Opacity* | **Explainable**: "The pasted region has different sensor noise; here's the box, the heatmap, and the innocent explanations listed with it." |
+| 1:00 | *Sidebar → demo2 → Cross-media* | **Cross-media**: "Video lane, audio lane: the picture jumps at 4.8 s, the background noise jumps 20 dB at 5.0 s. Two independent detectors, same moment, one linked finding." |
+| 1:30 | *Evidence*, *Play from a flagged span* | Play 0.5 s before the splice; point at the shaded spectrogram band. |
+| 2:00 | *Calibration* | **Honest confidence**: "Each detector's precision with its 95% interval, fitted on one split, scored on held-out files. The badge says which dataset these came from." |
+| 2:20 | *Sidebar → demo3 → Overview* | "Our untouched control: no significant indicators. We don't flag everything." |
+| 2:40 | *Custody → Verify integrity → Export report* | **Evidence handling**: "SHA-256 at intake, read-only copy, every step logged, including each model call and which checks didn't run." |
+
+**If something fails:** the app crashes → switch to the exported report tab. A semantic check shows *not run* →
+"That check needs the language model; everything else ran offline, and the report says exactly what was skipped."
 
 **If the network dies mid-demo:** keep going. The forensic detectors run offline. Say: *"Our forensics run fully offline; only the language checks need the API. Here's the same case from our pre-run report."* Switch to the report tab.
 
