@@ -4,7 +4,7 @@
  "n_calibration": 25,
  "n_held_out": 16,
  "date": "2026-11-19",
- "git": "516ac5f",
+ "git": "cad7330",
  "excluded_smoke_only": [
   "ph_aud_clone_01.wav",
   "ph_aud_clone_02.wav",
@@ -84,20 +84,20 @@
   },
   "av_aligned_flags/video": {
    "hits": 2,
-   "false_alarms": 0,
+   "false_alarms": 1,
    "n_manipulated": 3,
    "n_untouched": 2,
    "precision": [
-    1.0,
-    0.34237195288961925,
-    1.0
+    0.6666666666666666,
+    0.2076549551264879,
+    0.9385096847238394
    ],
    "hit_rate": [
     0.6666666666666666,
     0.2076549551264879,
     0.9385096847238394
    ],
-   "weight": 0.52
+   "weight": 0.15
   },
   "caption_frame_mismatch/video": {
    "hits": 3,
@@ -360,7 +360,7 @@
   "audio_click/video": 0.52,
   "audio_splice/audio": 0.56,
   "audio_splice/video": 0.52,
-  "av_aligned_flags/video": 0.52,
+  "av_aligned_flags/video": 0.15,
   "caption_frame_mismatch/video": 0.06,
   "caption_image_mismatch/image": 0.19,
   "claim_date_mismatch/image": 0.55,

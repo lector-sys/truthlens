@@ -21,7 +21,7 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 <h1>TruthLens forensic report: {{ case.id }}</h1>
 {% if missing %}<p style="background:#F97352;color:#000;padding:8px;font-weight:bold">{{ missing }}</p>{% endif %}
 {% for c in credentials %}<p style="background:#EDE9FE;border-left:4px solid #7C3AED;padding:8px"><b>{{ c|e }}</b></p>{% endfor %}
-{% if headline.startswith('Not analysed') %}<p style="color:#64748B"><b>Overall: {{ headline }}.</b> No analyzer ran, so no label is given.</p>
+{% if headline.startswith(('Not analysed', 'Failed')) %}<p style="color:#64748B"><b>Overall: {{ headline }}.</b> No label is given.</p>
 {% else %}<p><b>Overall:</b> {{ headline }} (indicator strength {{ '%.2f' % a.case.p }}).</p>{% endif %}
 {% if credentials %}<p class="note">{{ credentials_note }}</p>{% endif %}
 {% if coverage_line %}<p style="color:#64748B">{{ coverage_line }}</p>{% endif %}
@@ -167,7 +167,7 @@ def render(case, result):
     groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
               "Context": "the caption or claims disagree with the media"}
     group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
-    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, align_rule=fusion.ALIGN_RULE, coverage_line=pipeline.coverage_line(cov), groups=groups,
+    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=result.get("headline") or fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, align_rule=fusion.ALIGN_RULE, coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
                            calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],

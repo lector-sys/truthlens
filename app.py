@@ -271,9 +271,10 @@ if screen == "Overview":
         md(f'<div class="panel" style="border-color:#A78BFA;border-width:2px"><b>{e(c)}</b></div>')
     c1, c2 = st.columns([2, 3])
     with c1:
-        if res["headline"].startswith("Not analysed"):
+        if res["headline"].startswith(("Not analysed", "Failed")):
             md(f'<div class="panel" style="text-align:center;color:#8B98A5"><div style="font-size:1.3rem">– {e(res["headline"])}</div>'
-               '<div style="margin-top:8px">No analyzer ran on this evidence, so no label is given.</div></div>')
+               '<div style="margin-top:8px">' + ("The analysis did not finish" if res.get("failed") else "No analyzer ran on this evidence")
+               + ', so no label is given.</div></div>')
         else:
             md('<div class="panel" style="text-align:center">' + gauge(a["case"]["label"], a["case"]["p"]) +
                f'<div class="mono small muted">fused strength {a["case"]["p"]:.2f}</div>'

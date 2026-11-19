@@ -143,12 +143,31 @@
   0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
 - Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
 
+## First real uploads: hangs and false alarms fixed (2026-11-19, cad7330)
+- **Hang**: `1.m4a.mp4` / `5.m4a.mp4` (iPhone voice memos, audio-only MP4) went to the video analyzer by extension;
+  OpenCV's `cap.read()` spun forever (4 cores busy). Now `pipeline.route` reads streams with ffprobe (logged
+  `routed`, coverage reads it), `video.analyze` refuses files with no video stream, and every analyzer runs under a
+  watchdog (60 s + 2 s per media second) -> "failed: timed out after N s" in coverage. A run that still dies is
+  marked failed (`pipeline.mark_failed`). The 5 stuck cases are kept and marked "Failed: analysis did not complete
+  (bug fixed in cad7330)". Ceiling: a timed-out thread can't be killed (process isolation if a real hang recurs).
+- **False Strong on the WhatsApp video** (0.85): `audio_splice` 1.00 "155.6 dB" = the first 0.25 s is 43% exact zeros
+  (no noise floor) -> zero frames skipped, floors clamped to -96..0 dBFS; splice/click/temporal_spike skip the first
+  and last 0.5 s (stated in the finding); `av_aligned_flags` adds at most 0.10 (`fusion.ALIGN_BONUS`, in the report).
+- Fresh live re-runs: WhatsApp **Weak 0.32** (temporal_spike at 3.20 s, edge of the judged range; frame noise/ELA
+  ~0.06); `1.m4a.mp4` **Moderate 0.70** (audio_click 40σ at 4.36 s, audio_splice 14.5 dB at 14.0 s where speech
+  ends); `5.m4a.mp4` **Strong 0.77** (audio_splice 27 dB at 12.0 s between a pause and speech, audio_click 272σ at
+  1.03 s). The voice-memo flags sit on ordinary speech dynamics: splice/click weights come from SYNTHETIC rows and
+  need real speech before they mean anything.
+- Calibration re-run (SYNTHETIC, n=41): only `av_aligned_flags/video` moved, 0.52 -> 0.15; held-out unchanged
+  (7/10 caught, 0/6 false alarms). Demos: demo1 Moderate 0.68, demo2 Strong 0.86 (0.93 before the cap), demo3 Weak 0.25.
+- Dashboard output now goes to `%TEMP%	ruthlens_dash.out` / `.err` when started hidden.
+
 ## Ownership lifted (2026-11-19)
 - AGENTS.md §2: the team works on one laptop, so file ownership by member (A/B/C/D) no longer restricts edits; the
   table now only names areas. §4.10 no longer says "commit only your own files". Every other rule is unchanged.
 - First cross-area edit: `image.synthetic_provenance` says "names an AI image / video / audio generator" by the
-  evidence's media (`fusion.media`). Audio files get the provenance check from `pipeline.py` (.wav/.mp3/.m4a/.flac,
-  what c2patool 0.27 signs); `synthetic_provenance/audio` has no weight, so it only shows (banner + finding).
+  evidence's media (`fusion.media`). Audio files get the provenance check from `pipeline.py` (every file routed to
+  audio only; c2patool 0.27 signs .wav/.mp3/.m4a/.flac); `synthetic_provenance/audio` has no weight, so it only shows (banner + finding).
 - **Freeze exception (approved)**: AI voice/audio tool names added to `image.GENERATORS` (ElevenLabs, Suno, Udio,
   Resemble AI, Murf, PlayHT). A name now counts only if no letter precedes it ("udio" would match "audio" in every
   audio C2PA manifest). Provenance results on all 47 test-set files are unchanged; no weight or threshold changed.
