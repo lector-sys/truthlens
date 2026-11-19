@@ -1,11 +1,32 @@
 [theme]
 base = "dark"
-primaryColor = "#38BDF8"
-backgroundColor = "#0A0E13"
-secondaryBackgroundColor = "#10161D"
+primaryColor = "#4FD1C5"
+backgroundColor = "#0D1117"
+secondaryBackgroundColor = "#151B23"
 textColor = "#E6EDF3"
-borderColor = "#1F2A36"
-font = "sans serif"
+borderColor = "#263040"
+font = "Inter, 'Segoe UI', system-ui, sans-serif"
+headingFont = "'Space Grotesk', Inter, 'Segoe UI', sans-serif"
+codeFont = "'JetBrains Mono', Consolas, ui-monospace, monospace"
+baseRadius = "10px"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter.woff2"
+weight = "100 900"
+
+[[theme.fontFaces]]
+family = "Space Grotesk"
+url = "app/static/fonts/space-grotesk.woff2"
+weight = "300 700"
+
+[[theme.fontFaces]]
+family = "JetBrains Mono"
+url = "app/static/fonts/jetbrains-mono.woff2"
+weight = "100 800"
+
+[server]
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
