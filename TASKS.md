@@ -284,8 +284,8 @@ lip-sync (unless D approves at hour 19).
 ### Member D: Integration lead (uses Claude)
 **Files:** everything not owned by A, B or C.
 
-- **D1 [MUST]** `pipeline.py`: for video files also run `audio.decode` + `audio.analyze_audio(wav, case, path.name, path.stem)`
-  so audio flags from videos reach `link_timestamps`.
+- **D1 [DONE]** Video files are routed to both `video.analyze` and `audio.analyze` (`analyzers/__init__.py`), so audio
+  flags from videos reach `link_timestamps`. **B:** this is why `audio.analyze` must accept video files.
 - **D2 [MUST]** `calibrate.py` (new): read `testset/labels.csv`, run each row as its own case with its `context`, and print
   a markdown table per indicator `type`: fired on manipulated / fired on real / precision; plus case-level label vs truth.
   The output goes on a slide.

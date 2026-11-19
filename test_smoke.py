@@ -5,6 +5,7 @@ from PIL import Image
 from truthlens.vault import Case
 from truthlens.indicator import Indicator
 from truthlens import pipeline, report, fusion, crossmodal
+import calibrate
 
 
 def jpeg(arr, q=75):
@@ -41,6 +42,13 @@ try:
     a = Indicator("a.wav", "audio", "splice", 0.6, "low", "", location={"start": 12.3})
     far = Indicator("a.wav", "audio", "splice", 0.6, "low", "", location={"start": 20.0})
     assert len(crossmodal.link_timestamps([v, a, far])) == 1
+    # calibration table: per-type counts and case-level catch/false-alarm
+    table = calibrate.summarize([
+        {"label": "manipulated", "types": {"ela_hotspot", "copy_move"}, "verdict": "Strong indicators"},
+        {"label": "manipulated", "types": {"ela_hotspot"}, "verdict": "Weak indicators"},
+        {"label": "real", "types": {"ela_hotspot"}, "verdict": "Moderate indicators"},
+    ])
+    assert "| ela_hotspot | 2/2 | 1/1 | 67% |" in table and "caught 1/2" in table and "false alarms 1/1" in table, table
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
     case.delete()
