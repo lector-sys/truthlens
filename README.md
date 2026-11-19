@@ -46,10 +46,11 @@ Linux / macOS: the `x86_64-unknown-linux-gnu.tar.gz` / `universal-apple-darwin.z
 ```
 upload ─► vault (SHA-256, read-only copy, append-only log)
         ─► analyzers by type ── image: EXIF · ELA · noise map · copy-move · C2PA/XMP provenance · spectrum · visual artifacts
-                              ├ video: metadata · per-frame ELA/noise · temporal spikes (not scene cuts)
-                              └ audio: noise-floor splices · clicks · spectrogram · transcript
-        ─► text: claims (truthlens-vl; regex offline)
-        ─► cross-media: A/V flags within 0.5 s · caption↔image/frames · claimed date↔metadata · quote↔transcript
+                              ├ video: metadata · per-frame ELA/noise · temporal spikes · face track + flicker · keyframe checks
+                              ├ audio: splices · clicks · band limit · too-clean pauses · flat prosody · spectrogram · transcript
+                              └ text (.txt/.md/pasted): claims, like the caption
+        ─► text: claims from the caption (truthlens-vl; regex offline)
+        ─► cross-media: A/V flags within 0.5 s · caption↔image/frames · claimed date↔metadata · quote↔transcript · lip-sync
         ─► fusion: noisy-OR of score × calibrated weight (calibration.json)
         ─► dashboard (app.py) + self-contained HTML report
 ```

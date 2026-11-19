@@ -2,6 +2,23 @@
 
 **Blocked on the real test set: semantic weights are 0 on synthetic data. Demo cases must use real photos and clips.**
 
+## Problem-statement coverage (PS04, 2026-11-19)
+| Requirement | Covered by | Status / limits |
+|---|---|---|
+| Edited images (splice, clone, retouch) | `ela_hotspot` `noise_inconsistency` `copy_move` `exif_*` | built, calibrated on SYNTHETIC only |
+| AI-generated images | `synthetic_provenance` (C2PA via c2patool, XMP, generator names) `spectral_upsampling` `synthetic_visual_artifacts` | built; visual artifacts uncalibrated (weight 0) |
+| Edited video (cuts, re-joins) | `temporal_spike` (not at scene cuts) · per-frame ELA/noise · `reencoded` `no_creation_time` | built |
+| Deepfake / synthetic video | `lipsync_mismatch` (Haar face + mouth motion vs speech envelope, offset > 150 ms or r < 0.25) · `face_region_flicker` · image checks on 3 keyframes · `synthetic_provenance` on the file | built; **uncalibrated (weight 0)**; needs a face in > 50% of frames, else "not run: no face"; tested on generated cartoons only |
+| Spliced audio | `audio_splice` `audio_click` | built |
+| Synthetic / cloned speech | `synthetic_bandlimit` (hard cutoff, native rate) · `synthetic_silence` (digital / too-clean pauses, no breaths) · `synthetic_prosody` (flat pitch + loudness per sentence) | built; **uncalibrated (weight 0)**; no voice-identity comparison (would need a reference recording + speaker model) |
+| Text inputs | caption/claims box **and** `.txt` / `.md` / pasted text as evidence (own hash + custody); claims cross-checked against the media | built; no AI-authorship detection (out of scope by design, TASKS.md) |
+| Cross-media consistency | `av_aligned_flags` `caption_image_mismatch` `caption_frame_mismatch` `claim_date_mismatch` `quote_not_in_transcript` `lipsync_mismatch` | built |
+| Explainable, located findings | every Indicator: location, explanation, benign alternatives, artifact; Edited / Generated / Context groups | built |
+| Calibrated confidence | `calibrate.py` (Wilson CIs, held-out split); uncalibrated types weigh 0 | **blocked on the real test set** |
+| Human review | "Recommended human checks" per finding (by type + location) and in the summary (dashboard + report) | built |
+| Evidence preservation | SHA-256 on ingest, read-only copies, append-only log, conversions logged, integrity re-check | built |
+| Honest coverage | "Not analysed" / "Limited analysis" + "Checks run: X of Y. Not run: ..." | built |
+
 ## Waiting on (blocked, everything else is built)
 - **Real test set**: `testset/media/` has only synthetic `ph_*` files. Calibration numbers are stamped SYNTHETIC until real rows land.
 - Nothing else: semantic checks and transcripts now run on D's own GPU server (see below).
@@ -92,6 +109,23 @@
   didn't respond (network), retried" when /api/ps didn't answer either or the connection was refused/reset.
 - No other process on the laptop calls the GPU server (checked 19:5x: only the dashboard; no connections to it).
   Consistent with the server log: this laptop is the only client.
+
+## Scope gaps closed (2026-11-19, later)
+- OpenCV pinned to 4.x (`opencv-python<5`, 4.14 installed): 5.x removed Haar cascades. Haar finds a drawn face, so the
+  lip-sync smoke test uses a generated cartoon (`make_placeholder.talking_cartoon`), no face images.
+- Lip-sync on generated cartoons: in sync 0 ms (r 0.83), audio +200 ms → +200, +300 ms → +320 (40 ms frames), other
+  take → r 0.16 (flagged at < 0.25). Face flicker: none on 5 clean clips, catches a 2-frame face flash at 2.40 s.
+  Face stats use the upper 60% of the face box (a talking mouth isn't flicker); the last box is kept through a few
+  missed detections; spread floored at 1 grey level.
+- Band limit at the file's own sample rate (the 16 kHz copy can't show 11-16 kHz cuts): edge = last frequency within
+  20 dB of the speech band, needs >= 20 dB drop over +-0.8 kHz and >= 40 dB down above (16-bit floors sit ~55 dB down).
+  Silence: pauses <= -85 dBFS or > 50 dB below speech; breaths = bumps > 12 dB in pauses >= 300 ms. Prosody: median
+  sentence < 1.2 semitones and < 4 dB. None of these fire on the existing placeholder speech.
+- New placeholders: 2 cloned_voice (gated, upsampled 16 → 44.1 kHz), 2 ai_video (audio 300 ms late; other take),
+  2 untouched talking cartoons. Cartoons carry sensor noise + room tone so older detectors aren't fed digital
+  perfection; they still trip temporal_spike / audio_click (only the mouth moves; abrupt synthetic syllables).
+- Summary call: max 600 tokens and only the 20 strongest findings (it overflowed 300 tokens on a busy case).
+- Calibration not re-run: the new types weigh 0 until measured on real cloned voices / AI video.
 
 ## Module map
 | File | Role |

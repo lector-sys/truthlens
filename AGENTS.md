@@ -100,13 +100,14 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
 
 | Owner | types |
 |---|---|
-| A | `exif_missing` `exif_edit_software` `ela_hotspot` `noise_inconsistency` `copy_move` `reencoded` `no_creation_time` `temporal_spike` `face_texture_jump` `synthetic_provenance` `spectral_upsampling` `synthetic_visual_artifacts` |
-| B | `reencoded` `audio_splice` `audio_click` `uniform_pauses` |
-| C | `text_inconsistency` `av_aligned_flags` `caption_image_mismatch` `caption_frame_mismatch` `claim_date_mismatch` `quote_not_in_transcript` `image_matches_frame` |
+| A | `exif_missing` `exif_edit_software` `ela_hotspot` `noise_inconsistency` `copy_move` `reencoded` `no_creation_time` `temporal_spike` `face_texture_jump` `synthetic_provenance` `spectral_upsampling` `synthetic_visual_artifacts` `face_region_flicker` |
+| B | `reencoded` `audio_splice` `audio_click` `uniform_pauses` `synthetic_bandlimit` `synthetic_silence` `synthetic_prosody` |
+| C | `text_inconsistency` `av_aligned_flags` `caption_image_mismatch` `caption_frame_mismatch` `claim_date_mismatch` `quote_not_in_transcript` `image_matches_frame` `lipsync_mismatch` |
 
 **Artifact filenames** (always via `case.artifact_path(...)`; `{stem}` = evidence filename without extension):
 `{stem}_ela.png` `{stem}_noise.png` `{stem}_copymove.png` `{stem}_f0001.jpg…` (sampled frames)
 `{stem}_spike_{frame}.jpg` `{stem}_16k.wav` `{stem}_spec.png` `{stem}_transcript.json` `{stem}_spectrum.png`
+`{stem}_faces.json` (A: face box + mouth motion per frame) `{stem}_lipsync.json` (C: lip/speech curves and best lag)
 `{stem}.png` (PNG copy of an image format Pillow can't read, made by `media_meta.readable_image`)
 
 ## 6. How an AI assistant must answer
