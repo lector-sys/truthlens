@@ -266,6 +266,9 @@ def tt(i):
 
 # ---------- overview ----------
 if screen == "Overview":
+    creds = report.content_credentials(case, inds)
+    for c in creds:
+        md(f'<div class="panel" style="border-color:#A78BFA;border-width:2px"><b>{e(c)}</b></div>')
     c1, c2 = st.columns([2, 3])
     with c1:
         if res["headline"].startswith("Not analysed"):
@@ -275,6 +278,7 @@ if screen == "Overview":
             md('<div class="panel" style="text-align:center">' + gauge(a["case"]["label"], a["case"]["p"]) +
                f'<div class="mono small muted">fused strength {a["case"]["p"]:.2f}</div>'
                + (f'<div style="margin-top:6px;color:#8B98A5"><b>{e(res["headline"])}</b></div>' if res["headline"] == fusion.LIMITED else "")
+               + (f'<div class="small muted" style="margin-top:8px">{e(report.CREDENTIALS_NOTE)}</div>' if creds else "")
                + '<div style="margin-top:8px">Automated indicators, not proof. Review each finding below.</div></div>')
         if cov_line:
             md(f'<div class="panel small" style="border-color:#64748B">{e(cov_line)}</div>')

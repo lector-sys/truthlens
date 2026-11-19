@@ -188,6 +188,7 @@ try:
     pv = image.synthetic_provenance(case.dir / "evidence" / "gen_xmp.jpg", case)
     assert [(i.type, i.score) for i in pv] == [("synthetic_provenance", 0.9)] and pv[0].alt_explanations, pv
     assert image.synthetic_provenance(case.dir / "evidence" / "spliced.jpg", case) == []
+    assert report.content_credentials(case, pv) == []  # loose XMP tag, no signed manifest: no provenance banner
     exe = os.getenv("C2PATOOL") or shutil.which("c2patool")
     if exe:  # sign with c2patool's built-in test certificate: verified when intact, failed once one byte changes
         man = case.artifact_path("c2pa_manifest.json")
@@ -199,6 +200,21 @@ try:
         subprocess.run([exe, str(src), "-m", str(man), "-o", str(signed), "-f"], capture_output=True, check=True)
         ok = image.synthetic_provenance(signed, case)[0].explanation
         assert "C2PA manifest verified by c2patool" in ok and "trainedAlgorithmicMedia" in ok, ok
+        # provenance banner (Overview + report): signed manifest declaring AI generation; label itself unchanged
+        cc = Case("smoke_c2pa")
+        try:
+            cc.ingest("signed.jpg", signed.read_bytes())
+            r = pipeline.run(cc, "")
+            banner = report.content_credentials(cc, r["indicators"])
+            assert len(banner) == 1 and banner[0].startswith("Provenance (signed.jpg): this file's signed Content "
+                   "Credentials declare it AI-generated (signed by ") and banner[0].endswith(
+                   "; signer not checked against a trust list)."), banner
+            h = report.render(cc, r)
+            assert banner[0].replace("'", "&#39;") in h and report.CREDENTIALS_NOTE in h
+            assert h.index("Provenance (") < h.index("<b>Overall:</b>") < h.index(report.CREDENTIALS_NOTE), "order"
+            assert r["headline"] == fusion.headline(r["assessment"], r["coverage"])  # label not touched by the banner
+        finally:
+            cc.delete()
         d = bytearray(signed.read_bytes())
         d[-5000] ^= 0xFF
         signed.write_bytes(bytes(d))

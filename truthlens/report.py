@@ -1,8 +1,9 @@
 """OWNER D. HTML forensic report: self-contained (artifacts embedded), human checks, summary from indicators only."""
-import base64, json, mimetypes
+import base64, json, mimetypes, re
 from pathlib import Path
 from jinja2 import Template
 from . import llm, fusion
+from .analyzers import image
 
 SUMMARY_PROMPT = """You write the summary section of a forensic report for a human investigator.
 Use ONLY the indicators and assessment given. Do not add facts, guesses about intent, or new findings.
@@ -19,8 +20,10 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 </head><body>
 <h1>TruthLens forensic report: {{ case.id }}</h1>
 {% if missing %}<p style="background:#F97352;color:#000;padding:8px;font-weight:bold">{{ missing }}</p>{% endif %}
+{% for c in credentials %}<p style="background:#EDE9FE;border-left:4px solid #7C3AED;padding:8px"><b>{{ c|e }}</b></p>{% endfor %}
 {% if headline.startswith('Not analysed') %}<p style="color:#64748B"><b>Overall: {{ headline }}.</b> No analyzer ran, so no label is given.</p>
 {% else %}<p><b>Overall:</b> {{ headline }} (indicator strength {{ '%.2f' % a.case.p }}).</p>{% endif %}
+{% if credentials %}<p class="note">{{ credentials_note }}</p>{% endif %}
 {% if coverage_line %}<p style="color:#64748B">{{ coverage_line }}</p>{% endif %}
 <p class="note">Automated indicators, not proof. All findings require human review.</p>
 <p class="note">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
@@ -100,6 +103,28 @@ def human_check(i):
     return None
 
 
+CREDENTIALS_NOTE = ("The indicator label is based on calibrated statistical checks only; signed Content Credentials are "
+                    "a declaration by the tool that made the file and are shown separately.")
+AI_SOURCE = {"trainedalgorithmicmedia": "AI-generated", "compositewithtrainedalgorithmicmedia": "partly AI-generated"}
+
+
+def content_credentials(case, indicators):
+    """Banner sentences for evidence files whose C2PA manifest has a valid signature and declares AI generation.
+    Read back with c2patool: the indicator text can't tell a signed manifest claim from a loose XMP tag."""
+    files = {p.name: p for p in case.evidence()}
+    out = []
+    for i in indicators:
+        if i.type != "synthetic_provenance" or "C2PA manifest verified by c2patool" not in i.explanation or i.file not in files:
+            continue
+        tool = image._c2patool(files[i.file])
+        m = tool and re.search(r"signed by (.*) \(((?:signer )?)(.*)\)$", tool[2])
+        what = tool and next((AI_SOURCE[k] for k in AI_SOURCE if k in tool[1]), None)
+        if m and what and "failed" not in tool[2]:
+            out.append(f"Provenance ({i.file}): this file's signed Content Credentials declare it {what} "
+                       f"(signed by {m[1]}; signer {m[3]}).")
+    return list(dict.fromkeys(out))
+
+
 def human_checks(indicators, limit=10):
     """Deduplicated recommended checks for the case, strongest indicators first."""
     ordered = sorted(indicators, key=lambda i: -i.score)
@@ -141,7 +166,7 @@ def render(case, result):
     groups = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
               "Context": "the caption or claims disagree with the media"}
     group_types = {g: sorted({i.type for i in inds if fusion.group(i) == g}) for g in groups}
-    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), coverage_line=pipeline.coverage_line(cov), groups=groups,
+    return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
                            calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
