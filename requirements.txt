@@ -3,7 +3,7 @@ numpy
 jinja2
 streamlit
 openai==3.55.1
-opencv-python
+opencv-python<5  # 4.x: OpenCV 5 dropped Haar cascades (face detection for lip-sync / flicker)
 scenedetect
 imagehash
 rapidfuzz
