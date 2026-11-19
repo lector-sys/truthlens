@@ -725,7 +725,7 @@ def video_view(case, path, stem, mine, fi):
     X = lambda t: 40 + 940 * t / dur
     marks = "".join(
         f'<g><title>{e(term(i.type)[0])} {e(where(i.location))}</title><rect x="{X(tt(i)):.1f}" y="{14 if i.modality == "video" else 40}" '
-        f'width="{max(3, X(i.location["end"]) - X(i.location["start"])) if "end" in i.location else 3:.1f}" height="18" rx="2" '
+        f'width="{max(3, X(i.location["end"]) - X(tt(i))) if "end" in i.location else 3:.1f}" height="18" rx="2" '
         f'fill="{"#4FD1C5" if i.modality == "video" else "#F2B544"}"/></g>' for i in timed if i.modality in ("video", "audio"))
     fj, lj = case.artifact_path(f"{stem}_faces.json"), case.artifact_path(f"{stem}_lipsync.json")
     track = json.loads(fj.read_text(encoding="utf-8")) if fj.exists() else {"rows": [], "face_ratio": 0}
