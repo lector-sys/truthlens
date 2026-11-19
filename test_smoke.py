@@ -28,7 +28,9 @@ try:
     x, y, w, h = next(i for i in res["indicators"] if i.type == "ela_hotspot").location["bbox"]
     assert x <= 96 and y <= 96 and x + w >= 160 and y + h >= 160, (x, y, w, h)  # box covers the splice
     assert all(res["integrity"].values())
-    assert "spliced.jpg" in report.render(case, res)
+    html = report.render(case, res)
+    assert "spliced.jpg" in html and "data:image/png;base64," in html  # ELA heatmap embedded
+    assert "Inspect spliced.jpg region" in html and res["summary"] in html  # human check + (offline) summary
 
     # fusion: monotonic, bounded, labelled
     assert fusion.combine([]) == 0 and fusion.label(0) == "No significant indicators"
