@@ -82,44 +82,92 @@ def _ind(file_name, typ, t, score, why):
 
 
 EDGE = 0.5      # s at each end not checked for splices/clicks: recording start/stop, handling noise
-FLOOR_DB = -96  # 16-bit dynamic range: no measured noise floor is quieter than this
+FLOOR_DB = -96  # 16-bit dynamic range: no level difference is larger than this
+BANDS = (60, 250, 500, 1000, 2000, 4000, 8000)  # Hz: room tone is compared band by band (level and colour)
+
+
+def _spectra(y, sr):
+    """25 ms frames (10 ms hop): power spectra, level in dB (-200 = all zeros), spectral flatness, hop."""
+    n, hop = int(0.025 * sr), int(0.010 * sr)
+    f = np.lib.stride_tricks.sliding_window_view(y, n)[::hop]
+    p = np.abs(np.fft.rfft(f * np.hanning(n), axis=1)) ** 2 + 1e-20
+    db = 20 * np.log10(np.sqrt((f ** 2).mean(axis=1)) + 1e-10)
+    fr = np.fft.rfftfreq(n, 1 / sr)
+    v = p[:, (fr >= 80) & (fr < 1000)]  # the voice-harmonic range: harmonics are peaky here, rumble and hiss are not
+    flat = np.exp(np.log(v).mean(axis=1)) / v.mean(axis=1)  # ~0.5+ for noise (any colour), near 0 for voiced speech
+    return p, db, flat, hop
+
+
+def local_floor(db, hop, sr, span=1.5):
+    """Noise floor per frame: 10th percentile of the live (non-zero) frame levels within +-`span` s. After a room-tone
+    change it follows within about a window; splices are therefore located as the span between the two pauses compared."""
+    k = int(span * sr / hop)
+    w = np.lib.stride_tricks.sliding_window_view(np.pad(np.where(db > -199, db, np.nan), k, constant_values=np.nan), 2 * k + 1)
+    with np.errstate(all="ignore"):
+        return np.nanpercentile(np.where(np.isnan(w).all(axis=1, keepdims=True), -200, w), 10, axis=1)
+
+
+def speech_mask(db, flat, hop, sr):
+    """True where a frame is speech (or within 100 ms of it): well above the local noise floor, or above it and
+    tonal. Exact digital silence is neither speech nor room tone; callers drop it with db > -199."""
+    floor = local_floor(db, hop, sr)
+    sp = (db > floor + 10) | ((db > floor + 4) & (flat < 0.2))
+    k = int(0.1 * sr / hop)  # onsets and decays next to speech are not room tone
+    return np.convolve(sp.astype(float), np.ones(2 * k + 1), "same") > 0
 
 
 def splice_detection(y, sr, file_name, jump_db=6.0, z=8.0):
-    """(a) background noise-floor level jumps between 0.5 s windows, (b) sample-level clicks outside loud speech.
-    The first and last EDGE s are not checked; exact digital silence (all-zero frames) has no noise floor and is skipped."""
+    """(a) audio_splice: the room tone (background in the pauses, never speech) changes between consecutive pause
+    stretches, compared band by band; (b) audio_click: a near-instant broadband discontinuity with quiet on both sides.
+    The first and last EDGE s are not checked; exact digital silence (all-zero frames) has no room tone and is skipped.
+    Limits: a pause must last about 0.45 s to count (0.25 s plus 0.1 s margins next to speech), and the local floor needs
+    about 1.5 s of a new room tone, so a splice into a short or pause-free stretch can go unseen (28-29/30 on synthetic
+    speech with 7-10 words per side, 0/60 false alarms on unspliced speech)."""
     e = int(EDGE * sr)
     end = len(y) / sr
     y = y[e:len(y) - e]
-    db, hop = _frame_db(y, sr)
-    if not len(db):
+    if len(y) < int(0.5 * sr):
         return []
+    p, db, flat, hop = _spectra(y, sr)
     note = f" (0-{EDGE:g} s and {end - EDGE:.1f}-{end:.1f} s not checked: recording start/stop.)"
     out = []
-    per = int(0.5 * sr / hop)  # frames per 0.5 s window
-    nw = len(db) // per
-    if nw >= 2:
-        w = np.where(db <= -199, np.nan, np.clip(db, FLOOR_DB, 0))[:nw * per].reshape(nw, per)  # -200 dB = all zeros
-        ok = np.isfinite(w).sum(axis=1) >= per // 2  # a window that is mostly digital silence has no floor to compare
-        floors = np.full(nw, np.nan)
-        floors[ok] = np.nanpercentile(w[ok], 10, axis=1)
-        jumps = np.abs(np.diff(floors))
-        i = np.flatnonzero(np.nan_to_num(jumps) > jump_db)
-        for t, j in _merge(EDGE + (i + 1) * per * hop / sr, jumps[i]):
-            out.append(_ind(file_name, "audio_splice", t, j / 20,
-                            f"Background noise level changes by {j:.1f} dB at {t:.2f}s, as when two recordings are joined"
-                            + note))
+    quiet = ~speech_mask(db, flat, hop, sr) & (db > -199)
+    fr = np.fft.rfftfreq(int(0.025 * sr), 1 / sr)
+    band = np.stack([p[:, (fr >= a) & (fr < b)].sum(axis=1) for a, b in zip(BANDS, BANDS[1:])], axis=1)
+    per, least = int(0.5 * sr / hop), int(0.25 * sr / hop)  # room-tone chunks of 0.5 s, at least 0.25 s
+    chunks = [(a + i, min(a + i + per, b)) for a, b in _runs(quiet) for i in range(0, b - a, per) if min(per, b - a - i) >= least]
+    if len(chunks) >= 2:
+        tone = np.array([10 * np.log10(band[a:b].mean(axis=0)) for a, b in chunks])
+        jumps = np.clip(np.abs(np.diff(tone, axis=0)), 0, -FLOOR_DB).mean(axis=1)  # mean band difference, dB
+        i = np.flatnonzero(jumps > jump_db)
+        t = EDGE + np.array([(chunks[k][1] + chunks[k + 1][0]) / 2 for k in i]) * hop / sr
+        span = {round(tk, 6): k for tk, k in zip(t, i)}
+        for tk, j in _merge(t, jumps[i]):
+            k = span[round(tk, 6)]
+            (a0, a1), (b0, b1) = (EDGE + np.array(chunks[k]) * hop / sr), (EDGE + np.array(chunks[k + 1]) * hop / sr)
+            ind = _ind(file_name, "audio_splice", tk, j / 20,
+                       f"Room tone (background in the pauses) changes by {j:.1f} dB between {a1:.2f}s and {b0:.2f}s "
+                       f"(pause {a0:.1f}-{a1:.1f}s vs pause {b0:.1f}-{b1:.1f}s), as when two recordings are joined" + note)
+            ind.location = {"start": round(float(a1), 2), "end": round(float(max(b0, a1 + 0.05)), 2)}  # the join is in here
+            out.append(ind)
     dx = np.abs(np.diff(y))
     med = np.median(dx)
     zs = (dx - med) / (1.4826 * np.median(np.abs(dx - med)) + 1e-9)
     idx = np.flatnonzero(zs > z)
-    # ignore steep edges inside loud speech; level = 110 ms median so the click doesn't make its own frame "loud"
-    level = np.median(np.lib.stride_tricks.sliding_window_view(np.pad(db, 5, mode="edge"), 11), axis=1)
-    idx = idx[level[np.minimum(idx // hop, len(db) - 1)] < np.median(db) + 3]
+    q, g = int(0.05 * sr), int(0.002 * sr)  # 50 ms each side, 2 ms guard around the jump itself
+    idx = idx[(idx >= q) & (idx < len(y) - q)]
+    if len(idx):
+        c = np.concatenate([[0.0], np.cumsum(y.astype(np.float64) ** 2)])
+        lvl = lambda a, b: 10 * np.log10((c[b] - c[a]) / (b - a) + 1e-20)
+        floor = local_floor(db, hop, sr)[np.minimum(idx // hop, len(db) - 1)]
+        idx = idx[(lvl(idx - q, idx - g) < floor + 6) & (lvl(idx + g, idx + q) < floor + 6)]  # quiet on both sides
+        w = np.hanning(64)
+        hi = [(lambda s: s[len(s) // 2:].sum() / s.sum())(np.abs(np.fft.rfft(y[i - 32:i + 32] * w)) ** 2) for i in idx]
+        idx = idx[np.array(hi, dtype=float) >= 0.25] if len(idx) else idx  # broadband: plosives and onsets are low-heavy
     for t, zv in _merge(EDGE + idx / sr, zs[idx]):
         out.append(_ind(file_name, "audio_click", t, zv / 40,
-                        f"Sample-level discontinuity ({zv:.0f}σ) at {t:.2f}s in a quiet passage, typical of a hard cut"
-                        + note))
+                        f"Sample-level discontinuity ({zv:.0f}σ) at {t:.2f}s, broadband and with quiet on both sides, "
+                        "typical of a hard cut" + note))
     return out
 
 

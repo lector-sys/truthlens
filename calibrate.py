@@ -169,7 +169,7 @@ def run(argv=()):
         try:
             case.ingest(media.name, media.read_bytes())
             res = pipeline.run(case, row.get("context", ""))
-            results.append({"file": row["file"], "label": row["label"], "media": media_of(row["file"]),
+            results.append({"file": row["file"], "label": row["label"], "media": fusion.media(media.name),  # as routed
                             "indicators": res["indicators"]})
             print(f"{row['file']}: {row['label']} -> {res['assessment']['case']['label']}")
         finally:

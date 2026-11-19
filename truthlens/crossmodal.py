@@ -38,14 +38,16 @@ def _t(ind):
 
 
 def link_timestamps(indicators, window=0.5):
-    """Video flag and audio flag within `window` seconds -> one linked cross-modal indicator."""
+    """Video flag and audio flag within `window` seconds -> one linked cross-modal indicator. An audio flag located as a
+    span (a splice lies somewhere between two pauses) links when the video time is within `window` of that span."""
     timed = [i for i in indicators if _t(i) is not None]
     vids = [i for i in timed if i.modality == "video"]
     auds = [i for i in timed if i.modality == "audio"]
     out = []
     for v in vids:
         for a in auds:
-            if abs(_t(v) - _t(a)) <= window:
+            lo, hi = a.location.get("start", _t(a)), a.location.get("end", _t(a))
+            if lo - window <= _t(v) <= hi + window:
                 out.append(Indicator(v.file, "cross", "av_aligned_flags", min(1.0, (v.score + a.score) / 2 + 0.2), "medium",
                                      f"Video '{v.type}' at {_t(v):.2f}s coincides with audio '{a.type}' at {_t(a):.2f}s.",
                                      location={"t": _t(v)}, related=[a.file],

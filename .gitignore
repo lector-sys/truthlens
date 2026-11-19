@@ -4,3 +4,12 @@ __pycache__/
 testset/media/
 .env
 cache/
+
+# dashboard screenshots: only the README picks are tracked
+docs/screenshots/v2/*
+!docs/screenshots/v2/results_demo2_1280x720.png
+!docs/screenshots/v2/flow_1280x720_analyzing.png
+!docs/screenshots/v2/tab_Custody_demo2_1280x720.png
+!docs/screenshots/v2/showme_demo1_1280x720.png
+!docs/screenshots/v2/tab_Evidence_demo2_1280x720.png
+!docs/screenshots/v2/report_demo1_1280x720.png

@@ -49,8 +49,16 @@ ALIGN_RULE = (f"A/V alignment findings add at most {ALIGN_BONUS:.2f} to the labe
               "are already counted on their own, so one event is never counted twice.")
 
 
+ROUTED = {}  # evidence file name -> "audio" for audio-only containers (.mp4 with no picture), set by pipeline routing
+# ponytail: keyed by file name across cases; two different files with the same name, one audio-only, would share it.
+# Pass the case if that ever happens.
+
+
 def media(file):
-    """Media of an evidence file by extension: "image" | "video" | "audio" | "text" ("context" and unknown -> "text")."""
+    """Media of an evidence file: "image" | "video" | "audio" | "text" ("context" and unknown -> "text"). By extension,
+    except containers routing found to be audio only (they are weighed and worded as audio)."""
+    if file in ROUTED:
+        return ROUTED[file]
     from .analyzers import BY_EXT  # here: analyzers import much more than fusion needs at import time
     mods = BY_EXT.get(Path(file).suffix.lower())
     return mods[0].__name__.rsplit(".", 1)[1] if mods else "text"
@@ -58,7 +66,7 @@ def media(file):
 
 def key(i):
     """Calibration key: indicator type + media of its evidence file, e.g. "noise_inconsistency/video" (an audio flag in
-    an .mp4 is "/video"), so rows of one media never move another media's weight."""
+    a video's soundtrack is "/video"; in an audio-only .mp4 "/audio"), so rows of one media never move another's weight."""
     return f"{i.type}/{media(i.file)}"
 
 

@@ -1,5 +1,5 @@
 """python test_smoke.py: end-to-end check of vault, image analyzer, fusion, cross-modal, report."""
-import http.server, io, json, os, re, shutil, socket, subprocess, threading, time, wave
+import http.server, io, json, os, re, shutil, socket, subprocess, sys, threading, time, wave
 from types import SimpleNamespace as NS
 import cv2
 import numpy as np
@@ -13,6 +13,7 @@ from testset import make_placeholder as ph
 import calibrate
 
 llm.PROVIDERS, llm.WHISPER_URL = [], ""  # never the network, whatever .env says
+pipeline.ISOLATE = False  # analyzers in-process, so tests can swap in fakes; the child-process path is tested on its own
 
 
 def jpeg(arr, q=75):
@@ -122,10 +123,24 @@ try:
     ck = [i for i in audio.splice_detection(clicked, sr, "a.wav") if i.type == "audio_click"]
     assert len(ck) == 1 and ck[0].location["start"] < 2 < ck[0].location["end"], ck
 
+    trng = np.random.default_rng(0)  # own seed: these signals don't depend on how many draws earlier tests made
+
+    def word(s, f0):  # a voiced syllable (harmonics, smooth envelope)
+        t = np.arange(int(s * 16000)) / 16000
+        v = sum(np.sin(2 * np.pi * f0 * k * t * (1 + 0.03 * np.sin(6 * np.pi * t))) / k for k in range(1, 12))
+        return 0.08 * v * np.clip(np.sin(np.pi * t / t[-1]), 0, 1) ** 0.6
+
+    def talk(n, db, smooth=1):  # n words with natural pauses over one room tone (smooth > 1: darker tone)
+        y = np.concatenate([np.concatenate([word(trng.uniform(.25, .6), trng.uniform(110, 180)),
+                                            np.zeros(int(trng.uniform(.12, .7) * 16000))]) for _ in range(n)])
+        tone = np.convolve(trng.normal(0, 1, len(y)), np.ones(smooth) / smooth, "same")
+        return y + tone / np.sqrt((tone ** 2).mean()) * 10 ** (db / 20)
+
     # video: 1 fps frame sampling; a re-joined edit gives a temporal spike that links to the audio splice at the same cut
     plain, edited = case.artifact_path("plain.mp4"), case.artifact_path("edited.mp4")
     ph.video(plain, ph.speech(6.0), "2026-11-10")
-    ph.video(edited, ph.spliced_speech(3.0)[:6 * sr], "2026-11-10", cut=3.0)
+    # second take: 5 s, enough pauses after the join for room tone to be measured (see splice_detection's limits)
+    ph.video(edited, np.concatenate([talk(8, -62)[:3 * sr], talk(10, -44, smooth=25)[:5 * sr]]), "2026-11-10", cut=3.0)
     fr = video.sample_frames(plain, case)
     assert [t for t, _ in fr] == [0, 1, 2, 3, 4, 5] and all(f.exists() for _, f in fr), fr
     assert video.temporal_spikes(plain, case, []) == []
@@ -344,10 +359,10 @@ try:
     bl = audio.synthetic_bandlimit(np.fft.irfft(spec, len(lp)).astype(np.float32), 44100, "lp.wav")
     assert [i.type for i in bl] == ["synthetic_bandlimit"] and abs(bl[0].location["hz"] - 8000) < 300, bl
     assert audio.synthetic_bandlimit(lp.astype(np.float32), 44100, "full.wav") == []
-    talk = ph.speech().astype(np.float32)
-    assert audio.synthetic_silence(talk, 16000, "talk.wav")[0] == []
-    talk[np.convolve(np.abs(talk), np.ones(160) / 160, "same") < 0.01] = 0
-    sil, spans = audio.synthetic_silence(talk, 16000, "gated.wav")
+    speech_y = ph.speech().astype(np.float32)
+    assert audio.synthetic_silence(speech_y, 16000, "talk.wav")[0] == []
+    speech_y[np.convolve(np.abs(speech_y), np.ones(160) / 160, "same") < 0.01] = 0
+    sil, spans = audio.synthetic_silence(speech_y, 16000, "gated.wav")
     assert [i.type for i in sil] == ["synthetic_silence"] and "digital silence" in sil[0].explanation and spans, sil
     # lip-sync: generated talking face (Haar finds it), audio 300 ms late vs in sync; a face is needed, else "not run"
     lc = Case("smoke_lipsync")
@@ -426,6 +441,7 @@ try:
         assert not any(e["action"] == "frame_sampling_failed" for e in rc.entries())
         assert video.analyze(rc.dir / "evidence" / "voice.m4a.mp4", rc) == []  # second guard
         assert rc.entries()[-1] == {**rc.entries()[-1], "action": "check_not_run", "reason": "no video stream"}
+        assert fusion.media("voice.m4a.mp4") == "audio" and fusion.media("other.mp4") == "video"  # audio weights + wording
     finally:
         rc.delete()
 
@@ -451,12 +467,51 @@ try:
     dropout = np.concatenate([noise(1.5, -43), np.zeros(8000), noise(1.5, -43)])  # 0.5 s of zeros mid-file
     assert all(float(i.explanation.split("by ")[1].split(" dB")[0]) <= 96 for i in audio.splice_detection(dropout, 16000, "d.wav")
                if i.type == "audio_splice")
-    joined = np.concatenate([noise(2, -60), noise(2, -30)])
+    joined = np.concatenate([noise(3, -60), noise(3, -30)])  # >= ~1.5 s each side: the local floor needs that to follow
     sp = [i for i in audio.splice_detection(joined, 16000, "j.wav") if i.type == "audio_splice"]
-    assert len(sp) == 1 and abs(sp[0].location["start"] + 0.25 - 2.0) < 0.3 and "not checked" in sp[0].explanation, sp
+    assert len(sp) == 1 and sp[0].location["start"] <= 3.0 <= sp[0].location["end"] and "not checked" in sp[0].explanation, sp
     # recording edges: a level jump inside the last 0.5 s is not judged
     assert not [i for i in audio.splice_detection(np.concatenate([noise(3.7, -60), noise(0.3, -20)]), 16000, "e.wav")
                 if i.type == "audio_splice"]
+
+    # speech-aware splice/click (real voice memos): room tone is measured only in pauses, clicks need quiet on both sides
+    for _ in range(3):  # natural pauses between words over one room tone: no splice, no click
+        assert audio.splice_detection(talk(16, -58), 16000, "s.wav") == []
+    a, b = talk(10, -62), talk(10, -44, smooth=25)  # two recordings, different room tone (level and colour), joined
+    sp = [i for i in audio.splice_detection(np.concatenate([a, b]), 16000, "j.wav") if i.type == "audio_splice"]
+    assert len(sp) == 1 and sp[0].location["start"] <= len(a) / 16000 <= sp[0].location["end"], (sp, len(a) / 16000)
+    burst = lambda: np.convolve(rng.normal(0, .3, 128), np.ones(12) / 12, "same")  # /p/: low-heavy 8 ms burst, then vowel
+    pl = np.concatenate([np.concatenate([burst(), np.zeros(240), word(.35, 140), np.zeros(6400)]) for _ in range(8)])
+    pl = np.concatenate([np.zeros(16000), pl]) + noise(len(pl) / 16000 + 1, -58)
+    assert not [i for i in audio.splice_detection(pl, 16000, "p.wav") if i.type == "audio_click"]
+    ck = noise(5, -60)
+    ck[2 * 16000] += 0.5  # one digital click in silence
+    ck = [i for i in audio.splice_detection(ck, 16000, "c.wav") if i.type == "audio_click"]
+    assert len(ck) == 1 and ck[0].location["start"] < 2 < ck[0].location["end"], ck
+
+    # analyzers in a child process: a hang is killed with everything it started; a normal run works end to end
+    pidfile = case.artifact_path("hang.pid")
+    hang = [sys.executable, "-c", f"import os,time;open({str(pidfile)!r},'w').write(str(os.getpid()));time.sleep(60)"]
+    t = time.time()
+    try:
+        pipeline.guarded("subprocess:run", 4.0, hang)
+        raise AssertionError("no timeout")
+    except TimeoutError as e:
+        assert str(e) == "timed out after 4 s" and time.time() - t < 8, (e, time.time() - t)
+    gpid = int(pidfile.read_text())
+    alive = (str(gpid) in subprocess.run(["tasklist", "/FI", f"PID eq {gpid}", "/NH"], capture_output=True, text=True).stdout
+             if sys.platform == "win32" else os.path.exists(f"/proc/{gpid}"))
+    assert not alive, f"grandchild {gpid} still running"
+    pipeline.ISOLATE = True
+    ic = Case("smoke_isolated")
+    try:
+        ic.ingest("talk.wav", wav_bytes(talk(6, -58)))
+        r = pipeline.run(ic, "")
+        assert "audio analysis · talk.wav" in r["coverage"]["ran"], r["coverage"]
+        assert not [i for i in r["indicators"] if i.type in ("audio_splice", "audio_click")], r["indicators"]
+    finally:
+        pipeline.ISOLATE = False
+        ic.delete()
 
     # video: motion only in the last 0.5 s (camera handling) is not a temporal spike; the same jolt mid-clip is
     def clip(name, jolt_at):
