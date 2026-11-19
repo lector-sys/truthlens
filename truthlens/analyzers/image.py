@@ -197,8 +197,12 @@ def _c2patool(path):
 
 
 def synthetic_provenance(path, case):
-    """C2PA / JUMBF manifest, XMP-IPTC DigitalSourceType and generator names in the evidence file's own metadata bytes."""
-    data = path.read_bytes()
+    """C2PA / JUMBF manifest, XMP-IPTC DigitalSourceType and generator names in the evidence file's own metadata bytes.
+    Large files (video) are scanned in their first and last 8 MB, where containers keep metadata boxes."""
+    with open(path, "rb") as fh:
+        size = fh.seek(0, 2)
+        fh.seek(0)
+        data = fh.read() if size <= 32 << 20 else fh.read(8 << 20) + (fh.seek(size - (8 << 20)) and fh.read())
     low = data.lower()
     try:
         img = Image.open(path)

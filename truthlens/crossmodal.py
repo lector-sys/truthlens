@@ -1,5 +1,5 @@
-"""OWNER C. Cross-modal correlation: time-aligned A/V flags, caption<->image/frames (Luna vision),
-claimed date<->EXIF/ffprobe, quoted words<->transcript."""
+"""OWNER C. Cross-modal correlation: time-aligned A/V flags, caption<->image/frames (vision model),
+claimed date<->EXIF/ffprobe, quoted words<->transcript, lip motion<->speech audio (lip-sync)."""
 import json, re
 import numpy as np
 from PIL import Image
@@ -7,6 +7,7 @@ from rapidfuzz import fuzz
 from . import llm
 from .indicator import Indicator
 from .analyzers import IMAGE_EXTS
+from .analyzers.audio import load as load_wav
 from .analyzers.media_meta import ffprobe, encoder_tags, readable_image
 
 AV_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".wav", ".mp3", ".m4a", ".flac", ".ogg")
@@ -95,9 +96,14 @@ def caption_vs_frames(context_text, case):
 
 
 def _claims(case):
-    """Latest claims logged by text.analyze, or {}."""
-    e = next((e for e in reversed(case.entries()) if e["action"] == "text_claims"), None)
-    return {k: v for k, v in e.items() if k not in ("ts", "action")} if e else {}
+    """All claims logged by text.analyze in this case (caption + every text evidence file), lists merged, {} if none."""
+    out = {}
+    for e in case.entries():
+        if e["action"] == "text_claims":
+            for k, v in e.items():
+                if isinstance(v, list):
+                    out.setdefault(k, []).extend(x for x in v if x not in out[k])
+    return out
 
 
 def _capture_date(p):
@@ -158,8 +164,75 @@ def quote_vs_transcript(claims, case, min_ratio=70):
     return out
 
 
+def lipsync_series(t, mouth, env, max_lag=0.5):
+    """Cross-correlate mouth motion with the change of the speech envelope, over frames with a face during speech.
+    -> {"lag_ms": best lag (> 0: the audio comes after the lips), "r": correlation there, "r0": at lag 0, "n": frames}."""
+    t, m, a = np.asarray(t, float), np.asarray(mouth, float), np.asarray(env, float)
+    dt = float(np.median(np.diff(t))) if len(t) > 1 else 0.04
+    speech = a > np.percentile(a, 40)
+    ok = np.isfinite(m) & speech
+    if ok.sum() < 3 / dt:  # need >= 3 s of speech with a visible face
+        return None
+    k = np.ones(3) / 3
+    m = np.convolve(np.nan_to_num(m), k, "same")
+    a = np.convolve(np.abs(np.diff(a, prepend=a[0])), k, "same")  # motion goes with *changes* in loudness
+    m, a = (m - m[ok].mean()) / (m[ok].std() + 1e-9), (a - a[ok].mean()) / (a[ok].std() + 1e-9)
+    best = None
+    for lag in range(-round(max_lag / dt), round(max_lag / dt) + 1):
+        sh = np.roll(a, -lag)  # audio shifted earlier by `lag` frames
+        use = ok & np.roll(ok, -lag)
+        r = float((m[use] * sh[use]).mean()) if use.sum() > 10 else -1.0
+        if lag == 0:
+            r0 = r
+        if best is None or r > best[1]:
+            best = (lag, r)
+    return {"lag_ms": round(best[0] * dt * 1000), "r": round(best[1], 3), "r0": round(r0, 3), "n": int(ok.sum())}
+
+
+def lipsync_mismatch(case, low=0.25, offset_ms=150):
+    """Per video with a tracked face (A's {stem}_faces.json) and decoded audio (B's {stem}_16k.wav): flag low lip/speech
+    correlation or a consistent offset > `offset_ms`. Needs a face in > 50% of sampled frames, else logged not run."""
+    out = []
+    for p in case.evidence():
+        fj, wav = case.artifact_path(f"{p.stem}_faces.json"), case.artifact_path(f"{p.stem}_16k.wav")
+        if p.suffix.lower() not in VIDEO_EXTS or not fj.exists() or not wav.exists():
+            continue
+        track = json.loads(fj.read_text(encoding="utf-8"))
+        if track["face_ratio"] <= 0.5:
+            case.log("check_not_run", check="lipsync", file=p.name,
+                     reason=f"no face: visible in {track['face_ratio']:.0%} of sampled frames (needs > 50%)")
+            continue
+        y, sr = load_wav(wav)
+        rows = track["rows"]
+        t = np.array([r["t"] for r in rows])
+        half = max(1, int(0.02 * sr))
+        env = np.array([np.sqrt((y[max(0, int(x * sr) - half):int(x * sr) + half] ** 2).mean() + 1e-12) for x in t])
+        mouth = [r["mouth"] if r.get("mouth") is not None else np.nan for r in rows]
+        res = lipsync_series(t, mouth, env)  # linear RMS: the mouth opens with amplitude, not with dB
+        if res is None:
+            case.log("check_not_run", check="lipsync", file=p.name, reason="under 3 s of speech with a visible face")
+            continue
+        case.artifact_path(f"{p.stem}_lipsync.json").write_text(json.dumps({**res, "t": t.tolist(), "mouth": mouth,
+                                                                            "audio_db": (20 * np.log10(env)).tolist()},
+                                                                           default=lambda v: None), encoding="utf-8")
+        case.log("lipsync_check", file=p.name, **res)
+        lag, r, r0 = res["lag_ms"], res["r"], res["r0"]
+        if abs(lag) > offset_ms and r > 0.3 and r - r0 > 0.1:
+            score, why = min(1.0, abs(lag) / 400), (f"Lip motion and speech line up best when the audio is shifted by "
+                                                    f"{lag:+d} ms (r {r:.2f} vs {r0:.2f} as recorded)")
+        elif r < low:
+            score, why = 0.4, f"Lip motion barely follows the speech (best correlation {r:.2f} over {res['n']} frames)"
+        else:
+            continue
+        out.append(Indicator(p.name, "cross", "lipsync_mismatch", score, "low", why + ", as in dubbed or generated video.",
+                             location={"start": float(t[0]), "end": float(t[-1]), "lag_ms": lag},
+                             alt_explanations=["Dubbing or voice-over", "Encoder A/V drift (constant offset)",
+                                               "Face turned away or mouth hidden"]))
+    return out
+
+
 def analyze(indicators, context_text, case):
-    out = link_timestamps(indicators)
+    out = link_timestamps(indicators) + lipsync_mismatch(case)
     if context_text:
         out += caption_vs_images(context_text, case) + caption_vs_frames(context_text, case)
     claims = _claims(case)
