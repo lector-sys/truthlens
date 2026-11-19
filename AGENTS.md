@@ -68,7 +68,9 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
 
 1. **Scope:** implement only the functions assigned to you in `TASKS.md`. No extra features, endpoints, classes,
    config systems, CLI flags, databases, auth, Docker, or refactors.
-2. **No new files** except the ones `TASKS.md` lists. No new folders in `truthlens/`.
+2. **No new files** except the ones `TASKS.md` lists, plus the dashboard theme: `ui/theme.css` (all custom CSS, one
+   file) and bundled local fonts in `static/fonts/` (woff2 under the SIL OFL with their licence files; served by
+   Streamlit's static serving, never from a CDN). No new folders in `truthlens/`.
 3. **Dependencies:** only these: `pillow numpy jinja2 streamlit openai opencv-python scenedetect imagehash rapidfuzz`,
    plus Python stdlib and the `ffmpeg`/`ffprobe` executables. **Forbidden:** torch, tensorflow, keras, transformers,
    mediapipe, dlib, librosa, scipy (direct use), matplotlib, any GPU code, any model training or fine-tuning.

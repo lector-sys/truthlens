@@ -143,6 +143,29 @@
   0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
 - Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
 
+## Speech-aware audio, process watchdog, first real rows (2026-11-20)
+- **audio_splice** now measures room tone only in pauses: speech mask = level above a local floor (10th percentile
+  over +-1.5 s) or tonal in 80-1000 Hz (flatness < 0.2), +-100 ms margins; pauses >= 0.25 s (after margins, so ~0.45 s
+  of silence) in 0.5 s chunks; consecutive chunks compared in 6 bands (60 Hz-8 kHz), mean |diff| > 6 dB. Located as
+  the span between the two pauses compared. Synthetic: 0/60 false alarms on unspliced speech (incl. dark room tone),
+  room-tone splices found and located 28-29/30. Limits: pause-free speech or < ~1.5 s of new room tone is unseen.
+- **audio_click** needs quiet on both sides (50 ms, 2 ms guard, < local floor + 6 dB) and a broadband jump (>= 25% of
+  a 4 ms window's energy above sr/4): plosives and onsets no longer fire. Digital click in silence still 1.00.
+- A/V linking (`crossmodal.link_timestamps`): an audio span links when the video time is within 0.5 s of the span.
+- **Watchdog = child process**: `pipeline.guarded("module:function", limit, ...)` runs `python -m truthlens.pipeline`
+  with llm's settings copied in; on timeout `taskkill /T` ends it and its ffmpeg. `pipeline.ISOLATE = False` runs
+  in-process (tests with fakes). Smoke test: a hang that started its own grandchild is killed, grandchild gone.
+- **Audio-only containers**: routing tells `fusion.ROUTED`; weights key `/audio`, provenance says "AI audio generator";
+  calibrate groups rows by the same routed media.
+- Real rows added (untouched): `1.m4a.mp4`, `5.m4a.mp4` (iPhone voice memos, phone originals), the WhatsApp video
+  (WhatsApp copy); context empty, source in `owner`. Fresh live runs: WhatsApp Weak 0.32 (temporal_spike at 3.2 s);
+  `1.m4a` Limited analysis (no flags; was Moderate 0.70); `5.m4a` Weak 0.17 (one 6.1 dB room-tone change between
+  pauses 3.6 s apart, likely phone gain; was Strong 0.77).
+- Calibration (SYNTHETIC, n=44): the split reshuffled with 3 more rows, so many weights moved by sample noise;
+  `audio_splice/audio` 0.56 -> 0 and `/video` -> none (placeholder "speech" has no pauses >= 0.45 s, so their splices
+  are no longer measurable). Held-out: caught 6/10 (was 7/10), false alarms 2/7 (was 0/6). Demos: demo1 Moderate 0.72,
+  demo2 Moderate 0.67 (was Strong: its placeholder splice is unmeasurable now), demo3 Weak 0.35.
+
 ## Dashboard v2: "Evidence Light Table" (2026-11-19)
 - One flow **Upload -> Analyzing -> Results**. Analysis runs in a worker thread; the progress box is a 0.5 s fragment
   (queued / running / done / failed / not run, per-step times, elapsed, watchdog message). Pipeline emits every step as

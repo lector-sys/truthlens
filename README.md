@@ -70,5 +70,9 @@ Upload → Analyzing → Results, themed as an evidence light table.
 |---|---|---|
 | ![](docs/screenshots/v2/results_demo2_1280x720.png) | ![](docs/screenshots/v2/flow_1280x720_analyzing.png) | ![](docs/screenshots/v2/tab_Custody_demo2_1280x720.png) |
 
-More in `docs/screenshots/v2/` (1280×720 and 1920×1080). Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
+| Show me (focused tag) | Evidence viewer | Report (print theme) |
+|---|---|---|
+| ![](docs/screenshots/v2/showme_demo1_1280x720.png) | ![](docs/screenshots/v2/tab_Evidence_demo2_1280x720.png) | ![](docs/screenshots/v2/report_demo1_1280x720.png) |
+
+The full set (1280×720 and 1920×1080) is kept locally in `docs/screenshots/v2/` (git-ignored). Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
 team brief: [TASKS.md](TASKS.md) · rules: [AGENTS.md](AGENTS.md) · state + open items: [NOTES_STATE.md](NOTES_STATE.md)
