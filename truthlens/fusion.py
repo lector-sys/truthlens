@@ -1,7 +1,15 @@
 """OWNER D. Rule-based fusion. Weights come from detector reliability; tune with the labelled test set."""
 from .indicator import RELIABILITY_WEIGHT
 
+# Per-type weights measured by `python calibrate.py` (paste its TYPE_WEIGHT line here). Types not listed fall back
+# to RELIABILITY_WEIGHT[indicator.reliability]. Only paste numbers from the REAL test set, not the ph_ placeholders.
+TYPE_WEIGHT = {}
+
 LEVELS = [(0.75, "Strong indicators"), (0.45, "Moderate indicators"), (0.15, "Weak indicators"), (0.0, "No significant indicators")]
+
+
+def weight(i):
+    return TYPE_WEIGHT.get(i.type, RELIABILITY_WEIGHT[i.reliability])
 
 
 def combine(indicators):
@@ -10,7 +18,7 @@ def combine(indicators):
     best = {}
     for i in indicators:
         k = (i.file, i.type)
-        best[k] = max(best.get(k, 0.0), i.score * RELIABILITY_WEIGHT[i.reliability])
+        best[k] = max(best.get(k, 0.0), i.score * weight(i))
     p = 1.0
     for v in best.values():
         p *= 1 - v

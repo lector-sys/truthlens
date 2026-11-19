@@ -10,6 +10,13 @@ ROOT = Path(__file__).resolve().parent / "testset"
 POSITIVE = ("Moderate indicators", "Strong indicators")
 
 
+def weight(m, r, n_manip, n_real):
+    """Fusion weight from firing rates: 0.9 * (1 - FPR/TPR), Laplace-smoothed so 2 lucky hits don't earn 0.9.
+    0 = fires as often on real as on manipulated (no signal)."""
+    tpr, fpr = (m + 1) / (n_manip + 2), (r + 1) / (n_real + 2)
+    return round(0.9 * max(0.0, 1 - fpr / tpr), 2)
+
+
 def summarize(results):
     """results: [{"label": "real"|"manipulated", "types": set[str], "verdict": str}] -> markdown."""
     n = Counter(r["label"] for r in results)
@@ -23,6 +30,9 @@ def summarize(results):
     fp = sum(r["label"] == "real" and r["verdict"] in POSITIVE for r in results)
     lines += ["", f"Case level (Moderate/Strong = flagged): caught {tp}/{n['manipulated']} manipulated, "
                   f"false alarms {fp}/{n['real']} real"]
+    w = {t: weight(fired["manipulated"][t], fired["real"][t], n["manipulated"], n["real"])
+         for t in sorted(set(fired["manipulated"]) | set(fired["real"]))}
+    lines += ["", "Paste into truthlens/fusion.py:", f"TYPE_WEIGHT = {w}"]
     return "\n".join(lines)
 
 

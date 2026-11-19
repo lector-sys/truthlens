@@ -5,6 +5,7 @@ from PIL import Image
 from truthlens.vault import Case
 from truthlens.indicator import Indicator
 from truthlens import pipeline, report, fusion, crossmodal
+from truthlens.analyzers import audio
 import calibrate
 
 
@@ -51,6 +52,37 @@ try:
         {"label": "real", "types": {"ela_hotspot"}, "verdict": "Moderate indicators"},
     ])
     assert "| ela_hotspot | 2/2 | 1/1 | 67% |" in table and "caught 1/2" in table and "false alarms 1/1" in table, table
+    assert "'ela_hotspot': 0.1" in table and "'copy_move': 0.3" in table, table  # suggested fusion weights
+    fusion.TYPE_WEIGHT["ela_hotspot"] = 0.0
+    assert fusion.combine([weak]) == 0  # calibrated override beats the generic reliability weight
+    del fusion.TYPE_WEIGHT["ela_hotspot"]
+
+    # audio: noise-floor jump at 4 s and a click in silence are found; a steady floor gives nothing
+    sr = 16000
+    steady = rng.normal(0, 10 ** (-50 / 20), 8 * sr).astype(np.float32)
+    joined = steady.copy()
+    joined[4 * sr:] *= 10  # +20 dB floor
+    assert audio.splice_detection(steady, sr, "a.wav") == []
+    sp = [i for i in audio.splice_detection(joined, sr, "a.wav") if i.type == "audio_splice"]
+    assert len(sp) == 1 and sp[0].location["start"] < 4 < sp[0].location["end"], sp
+    clicked = steady.copy()
+    clicked[2 * sr] += 0.5
+    ck = [i for i in audio.splice_detection(clicked, sr, "a.wav") if i.type == "audio_click"]
+    assert len(ck) == 1 and ck[0].location["start"] < 2 < ck[0].location["end"], ck
+
+    # cross-modal: claimed date vs EXIF at the claim's precision; quote vs transcript
+    ex = Image.Exif()
+    ex[306] = "2026:11:02 10:00:00"
+    buf = io.BytesIO()
+    Image.fromarray(bg).save(buf, "JPEG", exif=ex)
+    case.ingest("dated.jpg", buf.getvalue())
+    assert crossmodal.claimed_date_vs_metadata({"when": ["2026-11", "2026-11-02", "1/2/24"]}, case) == []
+    bad = crossmodal.claimed_date_vs_metadata({"when": ["2026-11-15"]}, case)
+    assert [(i.file, i.type) for i in bad] == [("dated.jpg", "claim_date_mismatch")], bad
+    case.ingest("clip.wav", b"")
+    case.artifact_path("clip_transcript.json").write_text('[{"start":0,"end":2,"text":"We postponed the fest."}]')
+    q = crossmodal.quote_vs_transcript({"quotes": ["we postponed the fest", "we cancelled everything"]}, case)
+    assert [i.location["span"] for i in q] == ["we cancelled everything"], q
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
     case.delete()

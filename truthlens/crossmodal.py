@@ -1,10 +1,16 @@
-"""OWNER C. Cross-modal correlation. Working: time-aligned flag linking, caption<->image (Luna vision).
-TODO: claimed date/place<->EXIF/ffprobe, quote<->transcript (llm.transcribe), caption<->video keyframes,
-phash image<->frame, stretch: lip-sync (mouth motion vs audio energy)."""
+"""OWNER C. Cross-modal correlation: time-aligned A/V flags, caption<->image/frames (Luna vision),
+claimed date<->EXIF/ffprobe, quoted words<->transcript."""
+import json, re
+import numpy as np
+from PIL import Image
+from rapidfuzz import fuzz
 from . import llm
 from .indicator import Indicator
+from .analyzers.media_meta import ffprobe, encoder_tags
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+AV_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".wav", ".mp3", ".m4a", ".flac", ".ogg")
+VIDEO_EXTS = AV_EXTS[:5]
 CAPTION_PROMPT = """You compare a caption with an image for a forensic reviewer.
 Return JSON: {"consistent": true|false, "mismatches": [{"claim": "<caption part>", "observed": "<what the image shows>"}], "confidence": 0..1}.
 Judge only whether the image content plausibly matches the caption. Do NOT judge whether the image is AI-generated or edited."""
@@ -48,8 +54,96 @@ def caption_vs_images(context_text, case):
     return out
 
 
+def caption_vs_frames(context_text, case):
+    """Caption vs 3 evenly spaced sampled frames of each video (A's {stem}_f*.jpg artifacts), one Luna call per video."""
+    out = []
+    for p in case.evidence():
+        if p.suffix.lower() not in VIDEO_EXTS:
+            continue
+        frames = sorted(case.artifact_path("").glob(f"{p.stem}_f[0-9]*.jpg"))
+        if not frames:
+            continue
+        pick = [frames[i] for i in sorted(set(np.linspace(0, len(frames) - 1, 3).astype(int)))]
+        r = llm.ask_json(CAPTION_PROMPT, f"Caption/context: {context_text}\nThe images are frames from one video.", pick)
+        if r is None:
+            return []  # offline
+        case.log("caption_frames_check", file=p.name, model=llm.MODEL, frames=[f.name for f in pick], **r)
+        for m in r.get("mismatches", []):
+            out.append(Indicator(p.name, "cross", "caption_frame_mismatch", float(r.get("confidence", 0.5)), "medium",
+                                 f"Caption says '{m['claim']}', video frames show: {m['observed']}.",
+                                 location={"span": m["claim"]}, related=["context"],
+                                 alt_explanations=["Caption is vague or figurative", "Model misread the scene",
+                                                   "Sampled frames miss the described moment"]))
+    return out
+
+
+def _claims(case):
+    """Latest claims logged by text.analyze, or {}."""
+    e = next((e for e in reversed(case.entries()) if e["action"] == "text_claims"), None)
+    return {k: v for k, v in e.items() if k not in ("ts", "action")} if e else {}
+
+
+def _capture_date(p):
+    """ISO capture date (YYYY-MM-DD) from EXIF DateTimeOriginal/DateTime or container creation_time, else None."""
+    ext = p.suffix.lower()
+    if ext in IMAGE_EXTS:
+        try:
+            ex = Image.open(p).getexif()
+        except OSError:
+            return None
+        d = ex.get_ifd(0x8769).get(36867) or ex.get(306)
+        return str(d)[:10].replace(":", "-") if d else None
+    if ext in AV_EXTS:
+        d = encoder_tags(ffprobe(p)).get("creation_time")
+        return d[:10] if d else None
+    return None
+
+
+def claimed_date_vs_metadata(claims, case):
+    """Claimed date (at its own precision: year / month / day) vs each file's recorded capture date."""
+    when = [str(w).strip() for w in claims.get("when", [])]
+    when = [w for w in when if re.fullmatch(r"\d{4}(-\d{2}){0,2}", w)]  # non-ISO (e.g. regex 1/2/24) is skipped
+    out = []
+    for p in case.evidence():
+        got = _capture_date(p) if when else None
+        if not got:
+            continue  # A already flags missing metadata
+        for w in when:
+            if got[:len(w)] != w:
+                out.append(Indicator(p.name, "cross", "claim_date_mismatch", 0.6, "medium",
+                                     f"Context claims {w}, but {p.name} metadata records capture on {got}.",
+                                     location={"span": w}, related=["context"],
+                                     alt_explanations=["Camera clock set wrong", "Metadata rewritten on export",
+                                                       "Claim refers to publication date, not capture"]))
+    return out
+
+
+def quote_vs_transcript(claims, case, min_ratio=70):
+    """Each claimed quote fuzzy-matched against B's transcript of each recording; low match = quote not heard."""
+    quotes = [q for q in claims.get("quotes", []) if str(q).strip()]
+    out = []
+    for p in case.evidence():
+        tp = case.artifact_path(f"{p.stem}_transcript.json")
+        if not quotes or not tp.exists():
+            continue
+        said = " ".join(s["text"] for s in json.loads(tp.read_text(encoding="utf-8"))).lower()
+        if not said.strip():
+            continue
+        for q in quotes:
+            ratio = fuzz.partial_ratio(str(q).lower(), said)
+            if ratio < min_ratio:
+                out.append(Indicator(p.name, "cross", "quote_not_in_transcript", (100 - ratio) / 100, "medium",
+                                     f"Quoted words '{q}' were not found in the transcript of {p.name} "
+                                     f"(best match {ratio:.0f}/100).",
+                                     location={"span": q}, related=["context"],
+                                     alt_explanations=["Paraphrased quote", "Transcription error",
+                                                       "Quote from a different recording"]))
+    return out
+
+
 def analyze(indicators, context_text, case):
     out = link_timestamps(indicators)
     if context_text:
-        out += caption_vs_images(context_text, case)
-    return out
+        out += caption_vs_images(context_text, case) + caption_vs_frames(context_text, case)
+    claims = _claims(case)
+    return out + claimed_date_vs_metadata(claims, case) + quote_vs_transcript(claims, case)

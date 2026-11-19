@@ -7,6 +7,8 @@ from ..indicator import Indicator
 CLAIMS_PROMPT = """Extract verifiable claims from the context text accompanying media evidence.
 Return JSON: {"who": [], "what": [], "where": [], "when": [], "quotes": [],
 "inconsistencies": [{"span": "<exact text>", "reason": "<why the text contradicts itself>"}]}.
+Write every "when" item as an ISO date: YYYY-MM-DD, or YYYY-MM / YYYY if the text gives only that much.
+Write every "where" item as a plain place name.
 Only list inconsistencies inside the text itself. Do not judge whether the media is real."""
 
 

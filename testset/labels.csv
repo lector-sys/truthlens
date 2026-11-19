@@ -1,1 +1,36 @@
 file,label,manipulation,case,context,owner
+ph_img_real_01.jpg,real,none,demo3,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_real_02.jpg,real,none,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_real_03.jpg,real,none,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_real_04.jpg,real,none,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_real_05.jpg,real,none,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_real_06.jpg,real,none,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_real_noexif_01.jpg,real,none,,Screenshot shared in the group chat,placeholder
+ph_img_real_noexif_02.jpg,real,none,,Screenshot shared in the group chat,placeholder
+ph_img_splice_01.jpg,manipulated,splice,demo1,Flood waters reach the campus library on 2026-11-15,placeholder
+ph_img_splice_02.jpg,manipulated,splice,,Flood waters reach the campus library on 2026-11-02,placeholder
+ph_img_splice_03.jpg,manipulated,splice,,Flood waters reach the campus library on 2026-11-02,placeholder
+ph_img_splice_04.jpg,manipulated,splice,,Flood waters reach the campus library on 2026-11-02,placeholder
+ph_img_copymove_01.jpg,manipulated,copy_move,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_copymove_02.jpg,manipulated,copy_move,,"Photo of the campus library, taken 2026-11-02",placeholder
+ph_img_wrongdate_01.jpg,manipulated,wrong_date,,"Photo of the campus library, taken 2026-11-15",placeholder
+ph_img_wrongdate_02.jpg,manipulated,wrong_date,,"Photo of the campus library, taken 2026-11-15",placeholder
+ph_img_wrongdate_03.jpg,manipulated,wrong_date,,"Photo of the campus library, taken 2026-11-15",placeholder
+ph_aud_real_01.wav,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_real_02.wav,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_real_03.wav,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_real_04.wav,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_splice_01.wav,manipulated,audio_splice,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_splice_02.wav,manipulated,audio_splice,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_splice_03.wav,manipulated,audio_splice,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_splice_04.wav,manipulated,audio_splice,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_click_01.wav,manipulated,audio_splice,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_aud_click_02.wav,manipulated,audio_splice,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_real_01.mp4,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_real_02.mp4,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_real_03.mp4,real,none,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_voice_01.mp4,manipulated,voice_clone,demo2,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_voice_02.mp4,manipulated,voice_clone,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_voice_03.mp4,manipulated,voice_clone,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_wrongdate_01.mp4,manipulated,wrong_date,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
+ph_vid_wrongdate_02.mp4,manipulated,wrong_date,,"Interview recorded 2026-11-10. She said ""we cancelled the fest""",placeholder
