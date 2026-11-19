@@ -1,5 +1,5 @@
 """python test_smoke.py: end-to-end check of vault, image analyzer, fusion, cross-modal, report."""
-import io
+import io, re
 from types import SimpleNamespace as NS
 import numpy as np
 from PIL import Image
@@ -48,6 +48,11 @@ try:
     html = report.render(case, res)
     assert "spliced.jpg" in html and "data:image/png;base64," in html  # ELA heatmap embedded
     assert "Inspect spliced.jpg region" in html and res["summary"] in html  # human check + (offline) summary
+    # wording: no verdict words in the report or the dashboard (the all-caps REAL/SYNTHETIC dataset tag is allowed)
+    banned = re.compile(r"(fake|real|verdict|authentic|genuine|Fake|Real|Verdict|Authentic|Genuine)")
+    for name, text in (("report", html), ("app.py", Path("app.py").read_text(encoding="utf-8"))):
+        assert not banned.search(text), (name, banned.findall(text))
+    assert pipeline.load(case)["indicators"] == res["indicators"]  # saved result round-trips for the dashboard
 
     # fusion: monotonic, bounded, labelled
     assert fusion.combine([]) == 0 and fusion.label(0) == "No significant indicators"

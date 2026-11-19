@@ -2,7 +2,7 @@
 import base64, json, mimetypes
 from pathlib import Path
 from jinja2 import Template
-from . import llm
+from . import llm, fusion
 
 SUMMARY_PROMPT = """You write the summary section of a forensic report for a human investigator.
 Use ONLY the indicators and assessment given. Do not add facts, guesses about intent, or new findings.
@@ -19,7 +19,8 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 </head><body>
 <h1>TruthLens forensic report: {{ case.id }}</h1>
 <p><b>Overall:</b> {{ a.case.label }} (indicator strength {{ '%.2f' % a.case.p }}).</p>
-<p class="note">A score is an indicator, not a verdict. All findings require human review.</p>
+<p class="note">Automated indicators, not proof. All findings require human review.</p>
+<p class="note">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
 <h2>Summary</h2><p>{{ summary }}</p>
 <h2>Evidence & integrity</h2>
 <table><tr><th>File</th><th>SHA-256</th><th>Unchanged since ingest</th><th>Assessment</th></tr>
@@ -77,9 +78,9 @@ def summary(result, case=None):
         data = json.dumps({"assessment": a, "indicators": [i.to_dict() for i in inds]}, default=str)
         r = llm.ask_json(SUMMARY_PROMPT, llm.untrusted("indicators", data), schema=SUMMARY_SCHEMA, name="summary",
                          version=SUMMARY_VERSION, effort="low", case=case)
-        top = sorted(inds, key=lambda i: -i.score)[:3]
+        top = [k for k, v in sorted(fusion.contributions(inds).items(), key=lambda kv: -kv[1]) if v > 0][:3]
         fallback = (f"{a['case']['label']} across {len(a['files'])} file(s). Strongest: "
-                    + ("; ".join(f"{i.type} in {i.file}" for i in top) or "none")
+                    + ("; ".join(f"{t} in {f}" for f, t in top) or "none")
                     + ". Each finding has benign alternatives listed and needs human review.")
         result["summary"] = (r or {}).get("summary") or fallback
     return result["summary"]
@@ -89,6 +90,14 @@ def render(case, result):
     log = case.entries()
     inds = sorted(result["indicators"], key=lambda i: -i.score)
     checks = human_checks(inds)
-    return TEMPLATE.render(case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
+    cal = fusion.load_calibration()
+    calib = (f"{cal['dataset']} test set, n={cal['n']}, held-out n={cal['n_held_out']}, {cal['date']}, git {cal['git']}"
+             if cal else "uncalibrated reliability defaults")
+    calls = [e for e in log if e["action"] == "llm_call" and e["check"] != "transcribe"]
+    skipped = sorted({e["check"] for e in log if e["action"] == "check_not_run"})
+    semantic = ", ".join(sorted({f"{e['model']}, prompt {e.get('prompt_version', '?')}" for e in calls})) or "none run"
+    if skipped:
+        semantic += f" (not run: {', '.join(skipped)})"
+    return TEMPLATE.render(calib=calib, semantic=semantic, case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
                            integrity=result["integrity"], ingests=[e for e in log if e["action"] == "ingest"],
                            log=log, checks=checks, summary=summary(result, case))
