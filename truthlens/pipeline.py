@@ -1,6 +1,6 @@
 import dataclasses, importlib, json, pickle, subprocess, sys, tempfile, threading
 from pathlib import Path
-from . import analyzers, crossmodal, fusion, llm, report
+from . import analyzers, crossmodal, fusion, learned, llm, report
 from .analyzers import text as text_analyzer, image, IMAGE_EXTS, TEXT_EXTS
 from .analyzers.media_meta import ffprobe, has_stream
 from .indicator import Indicator
@@ -105,6 +105,13 @@ def _child(job, out):
     Path(out).write_bytes(pickle.dumps(res))
 
 
+def learned_media(path, mods):
+    """Which trained detector a file goes to: its media as routed ("image" | "video" | "audio"), else None. A video's
+    soundtrack is not sent to the audio detector (trained on speech recordings, not on soundtracks)."""
+    med = fusion.media(path.name)
+    return med if mods and med in ("image", "video", "audio") else None
+
+
 def mark_failed(case, why):
     """Close a case that could not finish: logged, and a result.json saying so, so it never looks like a pending run."""
     case.log("analysis_failed", reason=why)
@@ -127,6 +134,7 @@ def _run(case, context_text, progress):
     indicators = []
     plan = [(path, *route(path, case)) for path in case.evidence()]
     for step in ([f"{m.__name__.rsplit('.', 1)[1]} · {p.name}" for p, mods, _ in plan for m in mods]
+                 + [f"trained detector · {p.name}" for p, mods, _ in plan if learned_media(p, mods)]
                  + ["text · context"] * bool(context_text) + ["cross-media checks", "summary"]):
         progress(step, "queued")  # the whole plan first, so a UI can list what is still to come
     for path, mods, dur in plan:
@@ -152,6 +160,15 @@ def _run(case, context_text, progress):
                 indicators += [dataclasses.replace(i, modality="audio") for i in image.synthetic_provenance(path, case)]
             except Exception as e:
                 case.log("analyzer_error", file=path.name, analyzer="provenance", error=repr(e))
+        if med := learned_media(path, mods):  # network-bound (llm timeouts), so it runs here, not in a child process
+            step = f"trained detector · {path.name}"
+            progress(step, "running")
+            try:
+                indicators += learned.analyze(path, case, med, dur)
+                progress(step, "done")
+            except Exception as e:
+                case.log("analyzer_error", file=path.name, analyzer="trained detector", error=repr(e))
+                progress(step, "error")
     if context_text:
         progress("text · context", "running")
         indicators += text_analyzer.analyze(context_text, case)
@@ -199,7 +216,8 @@ def all_text(case, context_text=""):
 
 
 SEMANTIC = {"claims": "claims from the caption", "caption_consistency": "caption ↔ image / frames",
-            "synthetic_visual_artifacts": "visual artifacts (model)", "transcribe": "transcript"}
+            "synthetic_visual_artifacts": "visual artifacts (model)", "transcribe": "transcript",
+            **{f"learned_synthetic_{m}": f"trained detector ({m})" for m in ("image", "video", "audio")}}
 
 
 def coverage(case, context_text=""):
@@ -235,7 +253,8 @@ def coverage(case, context_text=""):
     want = (["claims"] + ["caption_consistency"] * bool(kinds & {"image", "video"})
             + ["synthetic_visual_artifacts"] * ("image" in kinds) + ["transcribe"] * any(
                 analyzers.audio.__name__ in mods_of(p) and not any(e["action"] == "no_audio" and e["file"] == p.name
-                                                                 for e in log) for p in ev))
+                                                                 for e in log) for p in ev)
+            + [f"learned_synthetic_{m}" for m in sorted({learned_media(p, mods_of(p)) for p in ev} - {None})])
     for c in want:
         needs_text = c in ("claims", "caption_consistency")
         checks[SEMANTIC[c]] = ("no caption or claims text supplied" if needs_text and not context_text else

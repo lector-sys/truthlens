@@ -6,13 +6,13 @@ import numpy as np
 from PIL import Image
 from truthlens.vault import Case
 from truthlens.indicator import Indicator
-from truthlens import pipeline, report, fusion, crossmodal, llm
+from truthlens import pipeline, report, fusion, crossmodal, llm, learned
 from pathlib import Path
 from truthlens.analyzers import audio, image, video
 from testset import make_placeholder as ph
 import calibrate
 
-llm.PROVIDERS, llm.WHISPER_URL = [], ""  # never the network, whatever .env says
+llm.PROVIDERS, llm.WHISPER_URL, llm.DETECTORS_URL = [], "", ""  # never the network, whatever .env says
 pipeline.ISOLATE = False  # analyzers in-process, so tests can swap in fakes; the child-process path is tested on its own
 
 
@@ -533,6 +533,78 @@ try:
     al_i = Indicator("v.mp4", "cross", "av_aligned_flags", 1.0, "medium", "x", {"t": 2.1}, None, ["y"])
     assert fusion.contributions([al_i], w8)[("v.mp4", "av_aligned_flags")] == fusion.ALIGN_BONUS
     assert abs(fusion.combine([sp_i, al_i], w8) - (1 - 0.48 * 0.9)) < 1e-9
+    # trained detectors against a mocked server: healthy (finding with version, training data, limits, occlusion box,
+    # heatmap; audio windows), slow (timed out at first byte, retried, not run), down (health probe fails, not run)
+    heat = io.BytesIO()
+    Image.new("L", (64, 48), 128).save(heat, "PNG")
+    reply = {"image": {"model_version": "image-test-1", "score": 0.91, "threshold": 0.7, "is_ai": True, "width": 64, "height": 48,
+                       "location": {"heatmap_png_base64": __import__("base64").b64encode(heat.getvalue()).decode(),
+                                    "boxes": [{"box": [8, 8, 24, 24], "weight": 0.4}, {"box": [32, 16, 48, 32], "weight": 1.0}]}},
+             "audio": {"model_version": "audio-test-1", "score": 0.8, "threshold": 0.7, "is_ai": True,
+                       "location": {"windows": [{"start_s": 0.0, "end_s": 2.0, "score": 0.2}, {"start_s": 1.0, "end_s": 3.0, "score": 0.95}]}}}
+
+    class Det(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self._send({"ok": True, "models": {"image": {"version": "image-test-1", "threshold": 0.7},
+                                               "audio": {"version": "audio-test-1", "threshold": 0.7}}})
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            if self.server.slow:
+                time.sleep(1.2)
+                return
+            self._send(reply[self.path.strip("/")])
+
+        def _send(self, d):
+            b = json.dumps(d).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+    det = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Det)
+    det.daemon_threads, det.slow = True, False
+    threading.Thread(target=det.serve_forever, daemon=True).start()
+    dead = socket.socket()
+    dead.bind(("127.0.0.1", 0))  # bound, never listening: connection refused
+    saved = (llm.DETECTORS_URL, llm.DETECT_TTFB_S, llm.FRESH)
+    llm.DETECT_TTFB_S, llm.FRESH = 0.4, True
+    dc = Case("smoke_detectors")
+    try:
+        pic = dc.ingest("pic.jpg", jpeg(np.full((48, 64, 3), 90, np.uint8)))
+        voice = dc.ingest("voice.wav", wav_bytes(talk(3, -58)))
+        llm.DETECTORS_URL = f"http://127.0.0.1:{det.server_address[1]}"
+        f = learned.analyze(pic, dc, "image")[0]
+        assert f.type == "learned_synthetic_image" and fusion.group(f) == "Generated" and f.location["bbox"] == [32, 16, 16, 16], f
+        assert all(s in f.explanation for s in ("image-test-1", "0.91", "Trained on: GenImage", "Sora", "no face-swap")), f.explanation
+        assert Path(f.artifact).exists() and not banned.search(f.explanation + " ".join(f.alt_explanations)), f
+        a = learned.analyze(voice, dc, "audio")[0]
+        assert (a.location["start"], a.location["end"]) == (1.0, 3.0) and len(a.location["windows"]) == 2, a.location
+        assert dc.entries()[-1]["action"] == "llm_call" and dc.entries()[-1]["model"] == "audio-test-1"
+        det.slow = True
+        t0 = time.time()
+        assert learned.analyze(pic, dc, "image") == [] and time.time() - t0 < 4
+        slow = [e for e in dc.entries() if e["action"] == "llm_attempt_failed"][-2:]
+        assert [x["stage"] for x in slow] == ["first byte"] * 2, slow
+        assert dc.entries()[-1]["reason"].startswith("detector server unavailable"), dc.entries()[-1]
+        llm.DETECTORS_URL = f"http://127.0.0.1:{dead.getsockname()[1]}"
+        assert learned.analyze(pic, dc, "image") == []
+        assert dc.entries()[-1]["reason"].startswith("detector server unavailable"), dc.entries()[-1]
+        keep = pic.read_bytes(), voice.read_bytes()
+        dc.delete()
+        dc = Case("smoke_detectors")  # coverage reads the whole log: a clean case for the pipeline run
+        dc.ingest("pic.jpg", keep[0])
+        dc.ingest("voice.wav", keep[1])
+        r = pipeline.run(dc, "")  # down: the case finishes, the trained detectors are listed as not run
+        assert r["coverage"]["not_run"]["trained detector (image)"].startswith("detector server unavailable"), r["coverage"]
+        assert "trained detector (audio)" in r["coverage"]["not_run"], r["coverage"]
+    finally:
+        llm.DETECTORS_URL, llm.DETECT_TTFB_S, llm.FRESH = saved
+        det.shutdown()
+        dead.close()
+        dc.delete()
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
     case.delete()

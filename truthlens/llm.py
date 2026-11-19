@@ -367,6 +367,59 @@ def transcribe(path, case=None):
     return None
 
 
+DETECTORS_URL = os.getenv("DETECTORS_URL", "")  # trained AI-generation detectors on the GPU host (/image /audio /video)
+DETECT_TTFB_S = 60  # plus 2 s per media second: the server waits for Ollama to go idle, then runs the model
+
+
+def detect(path, modality, case=None, seconds=0.0):
+    """Trained detector reply for one file ({"model_version","score","threshold","is_ai","location",...}) or None.
+    Same rules as the other GPU calls: cache first (key: file bytes + modality) unless FRESH, a /health probe before
+    sending, fresh connections, one retry on a network failure; else None plus check_not_run
+    "detector server unavailable (...)"."""
+    check = f"learned_synthetic_{modality}"
+    f = _cache_file("detect", modality, files=[path])
+    if (out := _cached(f, case, check=check)) is not None:
+        return out
+    why = "no DETECTORS_URL set"
+    if DETECTORS_URL:
+        base = DETECTORS_URL.rstrip("/")
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=PROBE_S) as r:
+                health = json.load(r)
+            if not health.get("models", {}).get(modality):
+                raise RuntimeError(f"/health lists no {modality} model")
+            b = uuid.uuid4().hex
+            body = (f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{Path(path).name}"\r\n'
+                    f'Content-Type: application/octet-stream\r\n\r\n').encode() + Path(path).read_bytes() + f"\r\n--{b}--\r\n".encode()
+            t0 = time.time()
+            for attempt in (1, 2):  # a network failure is retried once, on a fresh connection
+                try:
+                    status, data, timing = _post(f"{base}/{modality}", body, {"Content-Type": f"multipart/form-data; boundary={b}"},
+                                                 ttfb=DETECT_TTFB_S + 2 * seconds)
+                    break
+                except NetworkError as e:
+                    _log(case, "llm_attempt_failed", check=check, provider="detectors", attempt=attempt, error=str(e)[:200],
+                         network=True, stage=e.stage, **e.timing)
+                    if attempt == 2:
+                        raise
+            if status != 200:
+                why = f"detector HTTP {status}: {data[:150].decode(errors='replace')}"
+                raise LookupError(why)
+            out = json.loads(data)
+            info = {"provider": "detectors", "model": out.get("model_version", "?"),
+                    "host": (urlparse(base).hostname or "?").split(".")[0], "cloud": False}
+            _save(f, info, out)
+            _log(case, "llm_call", check=check, cached=False, seconds=round(time.time() - t0, 2), score=out.get("score"),
+                 threshold=out.get("threshold"), **timing, **info)
+            return out
+        except LookupError:  # the server answered but refused this file (e.g. audio too short): not an outage
+            pass
+        except Exception as e:  # down, timeout, bad JSON
+            why = f"detector server unavailable ({e!r})"[:300]
+    _log(case, "check_not_run", check=check, reason=why)
+    return None
+
+
 def provenance(log):
     """Where this case's model calls ran, plus the local-only statement when no cloud provider was used. None if no calls."""
     calls = [e for e in log if e["action"] == "llm_call"]

@@ -125,6 +125,9 @@ CHECKS = {  # what a person should do next, per indicator type
     "claim_date_mismatch": "Ask the source when and where it was captured; check the date against independent reports",
     "quote_not_in_transcript": "Listen to the full recording and ask the source where the quote comes from",
     "text_inconsistency": "Ask the author or source to clarify the contradicting statements",
+    "learned_synthetic_image": ORIGINAL + "; " + REVERSE[0].lower() + REVERSE[1:],
+    "learned_synthetic_video": ORIGINAL + "; " + REVERSE[0].lower() + REVERSE[1:],
+    "learned_synthetic_audio": VOICE + "; " + ORIGINAL[0].lower() + ORIGINAL[1:],
 }
 
 

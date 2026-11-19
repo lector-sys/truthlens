@@ -9,7 +9,7 @@ import streamlit as st
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from rapidfuzz import fuzz
 from truthlens.vault import Case, CASES, sha256
-from truthlens import pipeline, report, fusion, llm
+from truthlens import pipeline, report, fusion, llm, learned
 from truthlens.analyzers import IMAGE_EXTS, TEXT_EXTS
 from truthlens.analyzers.media_meta import readable_image
 
@@ -26,7 +26,8 @@ GROUP_C = {"Edited": "#7AA2F7", "Generated": "#BB9AF7", "Context": "#E0AF68"}
 GROUPS = {"Edited": "signs of local edits, cuts or re-encoding", "Generated": "signs the content was made by a generator",
           "Context": "the caption or claims disagree with the media"}
 ICON = {"image": "🖼️", "video": "🎞️", "audio": "🎙️", "text": "📝", "cross": "🔗"}
-LAYER = {"ELA": ("_ela.png", (79, 209, 197)), "Noise map": ("_noise.png", (242, 181, 68))}
+LAYER = {"ELA": ("_ela.png", (79, 209, 197)), "Noise map": ("_noise.png", (242, 181, 68)),
+         "Trained detector": ("_learned.png", (187, 154, 247))}
 TABS = ["Evidence", "Cross-media", "All findings", "Custody", "Calibration"]
 HIDDEN = ("smoke_", "calib_", "probe_", "diag_", "pv_", "tmp_")
 TERMS = {  # indicator type -> (plain name, what it means); used for tooltips and the sidebar glossary
@@ -57,13 +58,18 @@ TERMS = {  # indicator type -> (plain name, what it means); used for tooltips an
     "quote_not_in_transcript": ("quote not heard", "A quote in the caption is not in the transcript of the recording."),
     "image_matches_frame": ("image = frame", "An image matches a frame of the video."),
     "lipsync_mismatch": ("lip-sync", "Mouth movement and speech loudness are offset or do not follow each other."),
+    **{f"learned_synthetic_{m}": (f"trained detector ({m})", f"A neural network trained to tell AI-generated {m} from "
+                                  "camera or microphone recordings scored this file at or above its threshold. See MODEL_CARD.md.")
+       for m in ("image", "video", "audio")},
 }
 CHECK_NAMES = {"face_region_flicker": "face flicker", "lipsync": "lip-sync", "claims from the caption": "claims",
                "caption ↔ image / frames": "caption vs image", "visual artifacts (model)": "visual artifacts",
                "transcript": "transcript", "claimed date ↔ metadata": "date vs metadata", "exif": "EXIF"}
-STEP_NAMES = {"image": "Image checks", "video": "Video checks", "audio": "Audio checks", "text": "Claims from the caption",
+STEP_NAMES = {"trained detector": "Trained detector", "image": "Image checks", "video": "Video checks", "audio": "Audio checks", "text": "Claims from the caption",
               "cross-media checks": "Cross-media checks", "summary": "Summary of the findings"}
 HINTS = [  # reason fragment -> what to do next
+    ("detector server", "The trained-detector server didn't answer, so the trained detectors were skipped. Check it, then Analyze fresh."),
+    ("detectors_url", "No trained-detector server is configured. Set DETECTORS_URL in .env, then Analyze fresh."),
     ("no face", "No faces found, so lip-sync and face checks couldn't run. Try a clip where the speaker's face is visible."),
     ("no caption", "No caption was given. Add the caption or claims that came with the media to check them against it."),
     ("timed out", "A check took too long and the watchdog stopped it; the rest of the case finished. Try again, or a shorter clip."),
@@ -463,7 +469,7 @@ def progress_html(job, case):
             t_on[step] = ts
         elif s != "queued":
             t_off[step] = ts
-    errs = {f'{x["analyzer"].rsplit(".", 1)[1]} · {x["file"]}': x["error"] for x in case.entries() if x["action"] == "analyzer_error"}
+    errs = {f'{x["analyzer"].rsplit(".", 1)[-1]} · {x["file"]}': x["error"] for x in case.entries() if x["action"] == "analyzer_error"}
     now = job.get("done") or time.time()
     look = {"queued": ("#9AA7B4", "queued"), "running": ("#4FD1C5", "running…"), "done": ("#A3B18A", "✓ done"),
             "error": ("#F97352", "⚠ failed")}
@@ -747,6 +753,33 @@ def video_view(case, path, stem, mine, fi):
                 f'{marks}{faces}{lips}{ticks}</svg>',
                 f'Cyan: video flags · amber: audio flags · green: face visible ({track["face_ratio"]:.0%} of frames) · lips: mouth motion '
                 f'(cyan) vs speech loudness (amber)' + ("" if lip else " · lip-sync not run (no face or no speech)"))
+    for _, i in mine:
+        if i.type == "learned_synthetic_video" and i.location.get("segments"):
+            score_strip(i, i.location["segments"], "two-second segment")
+            crops = [c for c in i.location.get("crops", []) if case.artifact_path(c["file"]).exists()]
+            if crops:
+                md('<div class="film" role="list" aria-label="Frames the trained detector scored highest">' + "".join(
+                    f'<figure class="hit" style="--c:#BB9AF7"><img src="{img_uri(Image.open(case.artifact_path(c["file"])), 240, 80)}" '
+                    f'alt="{"Face" if c["face"] else "Frame"} at {c["t"]:.1f} s"><figcaption>{c["t"]:.1f}s · '
+                    f'{"face" if c["face"] else "frame"} · {c["score"]:.2f}</figcaption></figure>' for c in crops) + "</div>")
+
+
+def score_strip(i, cells, what):
+    """Trained-detector scores per time window as bars (threshold dashed), under the spectrogram or video timeline."""
+    dur = max(c[1] for c in cells)
+    X = lambda t: 40 + 940 * t / dur
+    thr = i.location.get("threshold", 0.5)
+    bars = "".join(f'<rect x="{X(c[0]):.1f}" y="{70 - 56 * c[2]:.1f}" width="{max(2.0, X(c[1]) - X(c[0]) - 1):.1f}" '
+                   f'height="{56 * c[2]:.1f}" fill="{"#BB9AF7" if c[2] >= thr else "#3B4252"}" fill-opacity="0.75">'
+                   f'<title>{c[0]:.1f}–{c[1]:.1f}s · {c[2]:.2f}</title></rect>' for c in cells)
+    ticks = "".join(f'<text x="{X(s):.0f}" y="86" fill="#9AA7B4" font-size="11" font-family="JetBrains Mono,monospace">{s:.0f}s</text>'
+                    for s in np.linspace(0, dur, 9))
+    light_table(f'<svg viewBox="0 0 1000 90" width="100%" role="img" aria-label="Trained detector score per {what}">'
+                f'<rect x="40" y="14" width="940" height="56" fill="#0D1117"/>{bars}'
+                f'<line x1="40" x2="980" y1="{70 - 56 * thr:.1f}" y2="{70 - 56 * thr:.1f}" stroke="#E6EDF3" stroke-dasharray="4 3"/>'
+                f'<text x="0" y="46" fill="#9AA7B4" font-size="11">score</text>{ticks}</svg>',
+                f"Trained detector ({e(i.location.get('model_version', '?'))}) score per {what} · violet = at or above its "
+                f"threshold {thr:.2f} (dashed) · indicative: the threshold was set on whole files")
 
 
 def audio_view(case, path, stem, mine, fi, log):
@@ -762,6 +795,9 @@ def audio_view(case, path, stem, mine, fi, log):
     start = 0
     if fi is not None and fi.file == path.name and fi.modality == "audio" and "start" in fi.location:
         start = int(max(0, fi.location["start"] - 0.5))
+    for _, i in mine:
+        if i.type == "learned_synthetic_audio" and i.location.get("windows"):
+            score_strip(i, i.location["windows"], "two-second window")
     wav = case.artifact_path(f"{stem}_16k.wav")
     st.audio(str(wav if wav.exists() else path), start_time=start)
     if start:
@@ -935,10 +971,23 @@ def calibration_tab():
 <li>The test set is small and team-made, so every rate has a wide interval: read the bars, not the dots.</li>
 <li>Platform recompression and resizing can both create and erase these indicators.</li>
 <li>{e(fusion.ALIGN_RULE)}</li>
+<li>Trained detectors: {e(learned.WEAK)} They can score phone, messenger and stock footage unlike their training data
+as AI-generated; see the model card below and LIMITATIONS.md.</li>
 <li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
 <li>No indicators does not mean unaltered. The language model reads text, compares captions with pictures and lists visible
 artifacts with their location; it is never asked whether media is synthetic.</li></ul></div>''')
-
+    if lw := cal.get("learned_weights"):
+        td = 'style="padding:4px 12px"'
+        md('<div class="panel small"><b>Trained detectors: weight by calibration source</b> <span class="muted">public_test = the '
+           "detector server's held-out test predictions · own = our test set · combined = used for the label</span>"
+           f'<table class="mono" style="margin-top:6px;border-collapse:collapse"><tr><td {td}></td>'
+           + "".join(f'<td class="muted" {td}>{k}</td>' for k in ("public_test", "own", "combined")) + "</tr>"
+           + "".join(f'<tr><td {td}>{e(t)}</td>' + "".join(f'<td {td}>{e(str(v.get(k, "—")))}</td>' for k in ("public_test", "own", "combined"))
+                     + "</tr>" for t, v in lw.items()) + "</table></div>")
+    card = ROOT / "MODEL_CARD.md"
+    if card.exists():
+        with st.expander("Model card: trained detectors (MODEL_CARD.md)"):
+            st.markdown(card.read_text(encoding="utf-8"))
 
 def results_page(case):
     res = load(case.id, mtime(case.id))

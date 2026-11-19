@@ -70,12 +70,14 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
    config systems, CLI flags, databases, auth, Docker, or refactors.
 2. **No new files** except the ones `TASKS.md` lists, plus the dashboard theme: `ui/theme.css` (all custom CSS, one
    file) and bundled local fonts in `static/fonts/` (woff2 under the SIL OFL with their licence files; served by
-   Streamlit's static serving, never from a CDN). No new folders in `truthlens/`.
+   Streamlit's static serving, never from a CDN), and the trained-detector integration: `truthlens/learned.py`,
+   `MODEL_CARD.md`, `LIMITATIONS.md`. No new folders in `truthlens/`.
 3. **Dependencies:** only these: `pillow numpy jinja2 streamlit openai opencv-python scenedetect imagehash rapidfuzz`,
    plus Python stdlib and the `ffmpeg`/`ffprobe` executables. **Forbidden:** torch, tensorflow, keras, transformers,
    mediapipe, dlib, librosa, scipy (direct use), matplotlib, any GPU code, any model training or fine-tuning.
    **HTTP APIs: allowlist only**, all called through `truthlens/llm.py`: the Ollama and whisper.cpp servers at
-   `OLLAMA_URL` / `WHISPER_URL` in `.env` (the team's private Tailscale GPU host); Groq / OpenAI only when listed in
+   `OLLAMA_URL` / `WHISPER_URL` and the trained-detector server at `DETECTORS_URL` in `.env` (all on the team's private
+   Tailscale GPU host; training happens there, never in this repo); Groq / OpenAI only when listed in
    `LLM_PROVIDERS`. No other HTTP API. **Evidence (media, captions, transcripts, anything derived from them) must not
    go to a cloud provider unless the user enables it** by listing that provider in `LLM_PROVIDERS`.
 4. **Evidence is read-only.** Never write, move, re-save or modify files from `case.evidence()`. Write only to
