@@ -40,3 +40,9 @@ ph_img_ai_param_01.png,manipulated,ai_generated,,"Photo of the campus library, t
 ph_img_ai_param_02.png,manipulated,ai_generated,,"Photo of the campus library, taken 2026-11-02",placeholder,ph-sd
 ph_img_ai_up_01.png,manipulated,ai_generated,,"Photo of the campus library, taken 2026-11-02",placeholder,ph-upsample
 ph_img_ai_up_02.png,manipulated,ai_generated,,"Photo of the campus library, taken 2026-11-02",placeholder,ph-upsample
+ph_aud_clone_01.wav,manipulated,cloned_voice,,"Statement recorded 2026-11-12. She said ""the venue is closed""",placeholder,ph-gated-upsampled
+ph_aud_clone_02.wav,manipulated,cloned_voice,,"Statement recorded 2026-11-12. She said ""the venue is closed""",placeholder,ph-gated-upsampled
+ph_vid_face_real_01.mp4,real,none,,"Statement recorded 2026-11-12. She said ""the venue is closed""",placeholder,
+ph_vid_face_real_02.mp4,real,none,,"Statement recorded 2026-11-12. She said ""the venue is closed""",placeholder,
+ph_vid_ai_late_01.mp4,manipulated,ai_video,,"Statement recorded 2026-11-12. She said ""the venue is closed""",placeholder,ph-offset
+ph_vid_ai_dub_01.mp4,manipulated,ai_video,,"Statement recorded 2026-11-12. She said ""the venue is closed""",placeholder,ph-dubbed

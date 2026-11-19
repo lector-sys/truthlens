@@ -278,6 +278,49 @@ try:
     finally:
         nc.delete()
 
+    # synthetic speech: hard band limit (noise low-passed at 8 kHz, 44.1 kHz file) vs full-band noise;
+    # digitally silent gaps vs the placeholder speech's real noise floor
+    lp = rng.normal(0, 0.1, 44100 * 4)
+    spec = np.fft.rfft(lp)
+    spec[np.fft.rfftfreq(len(lp), 1 / 44100) > 8000] = 0
+    bl = audio.synthetic_bandlimit(np.fft.irfft(spec, len(lp)).astype(np.float32), 44100, "lp.wav")
+    assert [i.type for i in bl] == ["synthetic_bandlimit"] and abs(bl[0].location["hz"] - 8000) < 300, bl
+    assert audio.synthetic_bandlimit(lp.astype(np.float32), 44100, "full.wav") == []
+    talk = ph.speech().astype(np.float32)
+    assert audio.synthetic_silence(talk, 16000, "talk.wav")[0] == []
+    talk[np.convolve(np.abs(talk), np.ones(160) / 160, "same") < 0.01] = 0
+    sil, spans = audio.synthetic_silence(talk, 16000, "gated.wav")
+    assert [i.type for i in sil] == ["synthetic_silence"] and "digital silence" in sil[0].explanation and spans, sil
+    # lip-sync: generated talking face (Haar finds it), audio 300 ms late vs in sync; a face is needed, else "not run"
+    lc = Case("smoke_lipsync")
+    try:
+        for name, off in (("synced.mp4", 0.0), ("late.mp4", 0.3)):
+            v = lc.dir / "evidence" / name
+            ph.talking_cartoon(v, off, sec=6)
+            video.face_track(v, lc)
+            audio.decode(v, lc)
+        found = {i.file: i.location["lag_ms"] for i in crossmodal.lipsync_mismatch(lc)}
+        assert list(found) == ["late.mp4"] and 220 <= found["late.mp4"] <= 380, found
+        assert next(e for e in lc.entries() if e["action"] == "lipsync_check" and e["file"] == "synced.mp4")["lag_ms"] == 0
+    finally:
+        lc.delete()
+    # text evidence: its own hash + custody entry, claims checked against the other evidence like a caption
+    tc = Case("smoke_text")
+    try:
+        ex = Image.Exif()
+        ex[306] = "2026:11:02 10:00:00"
+        buf = io.BytesIO()
+        Image.fromarray(bg).save(buf, "JPEG", exif=ex)
+        tc.ingest("photo.jpg", buf.getvalue())
+        tc.ingest("post.txt", b"Shared on the group: the library flooded on 2026-11-15.")
+        r = pipeline.run(tc, "")
+        assert any(e["action"] == "ingest" and e["file"] == "post.txt" and len(e["sha256"]) == 64 for e in tc.entries())
+        assert [(i.file, i.type) for i in r["indicators"] if i.type == "claim_date_mismatch"] == [("photo.jpg", "claim_date_mismatch")]
+        assert r["coverage"]["files"]["post.txt"]["analysed"] == 1 and "claimed date ↔ metadata" in r["coverage"]["ran"]
+        assert any("Ask the source when and where" in c for c in report.human_checks(r["indicators"]))
+    finally:
+        tc.delete()
+
     # whisper: the request carries the audio and fixed options only, never caption / claim / quote text
     sent, post = [], llm._post
 

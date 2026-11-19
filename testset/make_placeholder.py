@@ -140,6 +140,63 @@ def video(path, y, date=None, cut=None):
     a.unlink()
 
 
+def talking_cartoon(path, offset=0.0, sec=8.0, fps=25, seed=0):
+    """Drawn face (OpenCV's Haar detector finds it) whose mouth opens with syllable-like audio bursts; the soundtrack
+    is shifted by `offset` s (> 0: the audio comes late), as in a dubbed or badly generated talking-head clip."""
+    import cv2
+    r = np.random.default_rng(seed)
+    env, pos = np.zeros(int(sec * SR)), 0.3
+    while pos < sec - 0.5:  # syllables 0.15-0.35 s with 0.1-0.3 s gaps
+        on = r.uniform(0.15, 0.35)
+        i0, n = int(pos * SR), int(on * SR)
+        env[i0:i0 + n] = np.hanning(n) * r.uniform(0.4, 0.8)
+        pos += on + r.uniform(0.1, 0.3)
+    t = np.arange(len(env)) / SR
+    phase = 2 * np.pi * np.cumsum(140 * (1 + 0.15 * np.sin(2 * np.pi * 0.8 * t))) / SR
+    voice = env * sum(np.sin(k * phase) / k for k in range(1, 5)) + r.normal(0, 0.003, len(t))
+    shift = int(offset * SR)
+    voice = np.concatenate([r.normal(0, 0.003, shift), voice[:len(voice) - shift]]) if shift > 0 else voice  # room tone, not zeros
+    a = path.with_suffix(".tmp.wav")
+    a.write_bytes(wav_bytes(voice))
+    frames = []
+    for k in range(int(sec * fps)):
+        im = np.full((240, 320), 200, np.uint8)
+        cv2.ellipse(im, (160, 120), (60, 80), 0, 0, 360, 170, -1)
+        for x in (135, 185):
+            cv2.ellipse(im, (x, 100), (12, 7), 0, 0, 360, 40, -1)
+            cv2.line(im, (x - 14, 86), (x + 14, 86), 60, 3)
+        cv2.line(im, (160, 105), (155, 135), 120, 3)
+        opening = env[min(len(env) - 1, int(k / fps * SR))]
+        cv2.ellipse(im, (160, 160), (22, 3 + int(14 * opening)), 0, 0, 360, 60, -1)
+        frames.append(np.clip(cv2.GaussianBlur(im, (5, 5), 0) + r.normal(0, 2, im.shape), 0, 255).astype(np.uint8))  # sensor noise
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "gray", "-s", "320x240", "-r", str(fps),
+                    "-i", "-", "-i", str(a), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path)],
+                   input=np.stack(frames).tobytes(), check=True)
+    a.unlink()
+
+
+def cloned_voice(path, seed=0):
+    """Speech with digitally silent gaps, rendered at 16 kHz and upsampled to 44.1 kHz: a hard 8 kHz band limit."""
+    r = np.random.default_rng(seed)
+    y = speech() * r.uniform(0.8, 1.0)
+    y[np.convolve(np.abs(y), np.ones(160) / 160, "same") < 0.01] = 0.0
+    tmp = path.with_suffix(".tmp.wav")
+    tmp.write_bytes(wav_bytes(y))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmp), "-ar", "44100", str(path)], check=True)
+    tmp.unlink()
+
+
+def dubbed_cartoon(path, seed=0):
+    """Talking cartoon whose soundtrack comes from a different take (lips and speech don't match)."""
+    a, b = path.with_name(path.stem + "_a.mp4"), path.with_name(path.stem + "_b.mp4")
+    talking_cartoon(a, 0.0, seed=seed)
+    talking_cartoon(b, 0.0, seed=seed + 100)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(a), "-i", str(b), "-map", "0:v", "-map", "1:a", "-c", "copy",
+                    str(path)], check=True)
+    a.unlink()
+    b.unlink()
+
+
 def main():
     MEDIA.mkdir(exist_ok=True)
     rows = []
@@ -193,6 +250,16 @@ def main():
     for i in range(1, 3):
         add(f"ph_img_ai_up_{i:02d}.png", png_params(upsampled(), text=None), "manipulated", "ai_generated", LIB.format(D),
             generator="ph-upsample")
+
+    # cloned_voice / ai_video stand-ins (and untouched talking heads to compare with), last for the same reason
+    T = 'Statement recorded 2026-11-12. She said "the venue is closed"'
+    for i in range(1, 3):
+        add(f"ph_aud_clone_{i:02d}.wav", lambda p, i=i: cloned_voice(p, seed=i), "manipulated", "cloned_voice", T,
+            generator="ph-gated-upsampled")
+    for i in range(1, 3):
+        add(f"ph_vid_face_real_{i:02d}.mp4", lambda p, i=i: talking_cartoon(p, 0.0, seed=20 + i), "real", "none", T)
+    add("ph_vid_ai_late_01.mp4", lambda p: talking_cartoon(p, 0.3, seed=31), "manipulated", "ai_video", T, generator="ph-offset")
+    add("ph_vid_ai_dub_01.mp4", lambda p: dubbed_cartoon(p, seed=32), "manipulated", "ai_video", T, generator="ph-dubbed")
 
     labels = ROOT / "labels.csv"
     with open(labels, encoding="utf-8") as f:

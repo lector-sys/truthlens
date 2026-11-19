@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parent / "testset"
 POSITIVE = tuple(name for _, name in fusion.LEVELS[:2])  # Strong, Moderate
 FIRE = 0.25  # a type "fired" on a file when its strongest flag reaches this score; fainter flags are shown, not counted
 LABELS = ("real", "manipulated")  # TASKS.md §5 column values; shown as "untouched" / "manipulated"
-MANIPULATIONS = {"none", "splice", "copy_move", "ai_generated", "video_cut", "voice_clone", "audio_splice",
+GENERATED = ("ai_generated", "cloned_voice", "ai_video")  # rows must name the tool in the `generator` column
+MANIPULATIONS = {"none", "splice", "copy_move", "ai_generated", "cloned_voice", "ai_video", "video_cut", "voice_clone", "audio_splice",
                  "wrong_caption", "wrong_date", "wrong_quote"}
 CASES = {"", "demo1", "demo2", "demo3"}
 IMAGES = (".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif", ".avif", ".heic", ".heif", ".jxl", ".jp2")
@@ -38,8 +39,8 @@ def check(rows, media_dir=ROOT / "media"):
             probs.append(f"line {n}: manipulation '{r['manipulation']}' invalid for label '{r['label']}'")
         if r.get("case", "") not in CASES:
             probs.append(f"line {n}: case '{r['case']}' not in {sorted(CASES)}")
-        if r["manipulation"] == "ai_generated" and not r.get("generator", "").strip():
-            probs.append(f"line {n}: ai_generated row needs the generator name in the 'generator' column")
+        if r["manipulation"] in GENERATED and not r.get("generator", "").strip():
+            probs.append(f"line {n}: {r['manipulation']} row needs the tool name in the 'generator' column")
     return probs
 
 
@@ -129,10 +130,12 @@ def run(argv=()):
     for (m, l), c in sorted(counts.items()):
         if c < 15:
             print(f"warning: only {c} {m} {'untouched' if l == 'real' else l} files (goal >= 15)")
+    for kind in GENERATED:
+        got = [r for r in rows if r["manipulation"] == kind]
+        gens = {r.get("generator", "").strip().lower() for r in got} - {""}
+        if len(got) < 15 or len(gens) < 3:
+            print(f"warning: {len(got)} {kind} files from {len(gens)} tool(s) (goal >= 15 from >= 3 tools)")
     ai = [r for r in rows if r["manipulation"] == "ai_generated"]
-    gens = {r.get("generator", "").strip().lower() for r in ai} - {""}
-    if len(ai) < 15 or len(gens) < 3:
-        print(f"warning: {len(ai)} ai_generated files from {len(gens)} generator(s) (goal >= 15 from >= 3 generators)")
     for r in ai:
         try:
             with Image.open(ROOT / "media" / r["file"]) as im:
