@@ -4,3 +4,4 @@ __pycache__/
 testset/media/
 .env
 cache/
+calibration.json

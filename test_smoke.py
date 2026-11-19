@@ -61,14 +61,23 @@ try:
     a = Indicator("a.wav", "audio", "splice", 0.6, "low", "", location={"start": 12.3})
     far = Indicator("a.wav", "audio", "splice", 0.6, "low", "", location={"start": 20.0})
     assert len(crossmodal.link_timestamps([v, a, far])) == 1
-    # calibration table: per-type counts and case-level catch/false-alarm
-    table = calibrate.summarize([
-        {"label": "manipulated", "types": {"ela_hotspot", "copy_move"}, "verdict": "Strong indicators"},
-        {"label": "manipulated", "types": {"ela_hotspot"}, "verdict": "Weak indicators"},
-        {"label": "real", "types": {"ela_hotspot"}, "verdict": "Moderate indicators"},
-    ])
-    assert "| ela_hotspot | 2/2 | 1/1 | 67% |" in table and "caught 1/2" in table and "false alarms 1/1" in table, table
-    assert "'ela_hotspot': 0.1" in table and "'copy_move': 0.3" in table, table  # suggested fusion weights
+    # calibration: per-type counts + Wilson CI + weights, case-level confusion, stratified split, label validation
+    def ind(t, s=1.0):
+        return Indicator("f", "image", t, s, "high", "")
+    rs = [{"label": "manipulated", "media": "image", "indicators": [ind("ela_hotspot"), ind("copy_move")]},
+          {"label": "manipulated", "media": "image", "indicators": [ind("ela_hotspot", 0.1)]},
+          {"label": "real", "media": "image", "indicators": [ind("ela_hotspot", 0.6)]}]
+    det = calibrate.fit(rs)
+    assert (det["ela_hotspot"]["hits"], det["ela_hotspot"]["false_alarms"], det["ela_hotspot"]["weight"]) == (1, 1, 0.0)  # 0.1 < FIRE: not counted
+    assert det["copy_move"]["weight"] == 0.3 and det["copy_move"]["precision"][0] == 1.0
+    p, lo, hi = calibrate.wilson(15, 15)
+    assert p == 1 and 0.79 < lo < 0.80 and hi == 1  # "100%" of 15 is really 80-100%
+    ev = calibrate.evaluate(rs, {"ela_hotspot": 0.9, "copy_move": 0.9})
+    assert (ev["tp"], ev["fn"], ev["fp"], ev["tn"]) == (1, 1, 1, 0), ev
+    cal, held = calibrate.split([{"media": m, "label": l, "i": k} for k in range(10) for m in ("image", "audio")
+                                 for l in ("real", "manipulated")])
+    assert len(cal) == 24 and len(held) == 16 and not {id(r) for r in cal} & {id(r) for r in held}
+    assert calibrate.check([{"file": "x.jpg", "label": "untouched", "manipulation": "none", "case": ""}], case.dir)
     fusion.TYPE_WEIGHT["ela_hotspot"] = 0.0
     assert fusion.combine([weak]) == 0  # calibrated override beats the generic reliability weight
     del fusion.TYPE_WEIGHT["ela_hotspot"]
