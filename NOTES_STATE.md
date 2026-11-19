@@ -143,6 +143,18 @@
   0.61 → image 0.55 / video 0.34. Held-out: caught 7/10, false alarms 0/6.
 - Demo labels: demo1 Moderate 0.68 (was 0.58), demo2 Strong 0.93 (0.92), demo3 Weak 0.25 (0.18; caption_image 0.19).
 
+## Trained AI-generation detectors integrated (2026-11-20)
+GPU host serves `/image` `/audio` `/video` at `DETECTORS_URL` (.env). `llm.detect` (cache first, /health probe, one retry,
+else "detector server unavailable"); `truthlens/learned.py` turns a score at or above the server threshold into
+`learned_synthetic_{image,audio,video}` (Generated group) naming version, training data and limits. A video's soundtrack is
+not sent to the audio detector. Calibration: the server's held-out test predictions are rows (source=public_test) for these
+types only. Weights public_test / own / combined: image 0.85 / 0.0 / 0.85, video 0.84 / uncalibrated / 0.82, audio
+0.83 / uncalibrated / 0.82 (own = placeholders + 3 phone files, too few rows).
+Our untouched files: 1.m4a audio 0.90 (threshold 0.71) **false alarm**, 5.m4a audio 0.62 below, WhatsApp video 0.69
+(threshold 0.54) **false alarm** -> 2/3. Labels after Analyze fresh: 1.m4a Limited -> Moderate 0.74, 5.m4a Limited
+(unchanged), WhatsApp Weak 0.15 -> Moderate 0.63; demo1/2/3 unchanged (0.72 / 0.67 / 0.35). See MODEL_CARD.md, LIMITATIONS.md.
+No testset file was sent to the GPU host before training (Taildrop delivered nothing), so no training overlap.
+
 ## Speech-aware audio, process watchdog, first real rows (2026-11-20)
 - **audio_splice** now measures room tone only in pauses: speech mask = level above a local floor (10th percentile
   over +-1.5 s) or tonal in 80-1000 Hz (flatness < 0.2), +-100 ms margins; pauses >= 0.25 s (after margins, so ~0.45 s
