@@ -81,9 +81,9 @@ def wav_bytes(y):
     return buf.getvalue()
 
 
-def spliced_speech():
-    """Two 'rooms' joined: different noise floor and voice."""
-    cut = rng.uniform(3, 5)
+def spliced_speech(cut=None):
+    """Two 'rooms' joined at `cut` s: different noise floor and voice."""
+    cut = rng.uniform(3, 5) if cut is None else cut
     a, b = speech(cut, -50, 150), speech(8 - cut, -30, 175)
     return np.concatenate([a, b])
 
@@ -96,11 +96,17 @@ def clicked_speech():
     return y
 
 
-def video(path, y, date=None):
+def video(path, y, date=None, cut=None):
+    """Test-pattern video with audio `y`. With `cut`, 3 s of picture are skipped at `cut` s and the rest is a
+    slightly brighter "second take" (a re-joined edit)."""
     a = path.with_suffix(".tmp.wav")
     a.write_bytes(wav_bytes(y))
-    cmd = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=320x240:rate=10:duration={len(y) / SR}",
-           "-i", str(a), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"]
+    d = len(y) / SR
+    src = f"testsrc2=size=320x240:rate=10:duration={d + 3}"
+    vf = (f"{src},split[x][y];[x]trim=0:{cut},setpts=PTS-STARTPTS[p];[y]trim={cut + 3}:{d + 3},setpts=PTS-STARTPTS,eq=brightness=0.08[q];"
+          f"[p][q]concat=n=2:v=1[v]") if cut else f"{src}[v]"
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(a), "-filter_complex", vf, "-map", "[v]", "-map", "0:a",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-t", str(d)]
     cmd += ["-metadata", f"creation_time={date}T10:00:00Z"] if date else []
     subprocess.run(cmd + [str(path)], check=True)
     a.unlink()
@@ -143,7 +149,8 @@ def main():
     for i in range(1, 4):
         add(f"ph_vid_real_{i:02d}.mp4", lambda p: video(p, speech(), V), "real", "none", Q)
     for i in range(1, 4):
-        add(f"ph_vid_voice_{i:02d}.mp4", lambda p: video(p, spliced_speech(), V), "manipulated", "voice_clone", Q,
+        c = round(float(rng.uniform(3, 5)), 1)
+        add(f"ph_vid_voice_{i:02d}.mp4", lambda p: video(p, spliced_speech(c), V, cut=c), "manipulated", "voice_clone", Q,
             "demo2" if i == 1 else "")
     for i in range(1, 3):
         add(f"ph_vid_wrongdate_{i:02d}.mp4", lambda p: video(p, speech(), "2026-10-01"), "manipulated", "wrong_date", Q)

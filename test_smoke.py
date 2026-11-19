@@ -7,7 +7,8 @@ from truthlens.vault import Case
 from truthlens.indicator import Indicator
 from truthlens import pipeline, report, fusion, crossmodal, llm
 from pathlib import Path
-from truthlens.analyzers import audio, image
+from truthlens.analyzers import audio, image, video
+from testset import make_placeholder as ph
 import calibrate
 
 
@@ -84,6 +85,18 @@ try:
     clicked[2 * sr] += 0.5
     ck = [i for i in audio.splice_detection(clicked, sr, "a.wav") if i.type == "audio_click"]
     assert len(ck) == 1 and ck[0].location["start"] < 2 < ck[0].location["end"], ck
+
+    # video: 1 fps frame sampling; a re-joined edit gives a temporal spike that links to the audio splice at the same cut
+    plain, edited = case.artifact_path("plain.mp4"), case.artifact_path("edited.mp4")
+    ph.video(plain, ph.speech(6.0), "2026-11-10")
+    ph.video(edited, ph.spliced_speech(3.0)[:6 * sr], "2026-11-10", cut=3.0)
+    fr = video.sample_frames(plain, case)
+    assert [t for t, _ in fr] == [0, 1, 2, 3, 4, 5] and all(f.exists() for _, f in fr), fr
+    assert video.temporal_spikes(plain, case, []) == []
+    sp = video.temporal_spikes(edited, case, video.scene_cuts(edited, case))
+    assert sp and abs(sp[0].location["t"] - 3.0) <= 0.25 and Path(sp[0].artifact).exists(), sp
+    au = [i for i in audio.analyze(edited, case) if i.type == "audio_splice"]
+    assert any(abs(l.location["t"] - 3.0) <= 0.5 for l in crossmodal.link_timestamps(sp + au)), (sp, au)
 
     # cross-modal: claimed date vs EXIF at the claim's precision; quote vs transcript
     ex = Image.Exif()
