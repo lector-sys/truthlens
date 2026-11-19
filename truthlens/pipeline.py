@@ -1,5 +1,5 @@
 import json
-from . import analyzers, crossmodal, fusion, report
+from . import analyzers, crossmodal, fusion, llm, report
 from .analyzers import text as text_analyzer
 from .indicator import Indicator
 
@@ -36,6 +36,7 @@ def run(case, context_text="", progress=lambda step, state: None):
               "context": context_text}
     case.log("assessed", **result["assessment"]["case"])
     report.summary(result, case)  # once per run, saved below: viewing the case must not call (or log) the model again
+    result["source"] = llm.source(case.entries())  # "live" or "result from cache (date)"
     (case.dir / "result.json").write_text(json.dumps({**result, "indicators": [i.to_dict() for i in indicators]}),
                                           encoding="utf-8")
     return result
