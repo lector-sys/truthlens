@@ -9,6 +9,9 @@ Use ONLY the indicators and assessment given. Do not add facts, guesses about in
 Never use the words fake, real, authentic, genuine, proof. Say "indicators" and "may indicate".
 Mention the strongest 2-3 indicators with their location, the strongest benign alternative, and that a human must review.
 Return JSON: {"summary": "<3-5 sentences>"}"""
+SUMMARY_VERSION = "v2"
+SUMMARY_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["summary"],
+                  "properties": {"summary": {"type": "string"}}}
 
 TEMPLATE = Template("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>TruthLens report {{ case.id }}</title>
 <style>body{font-family:sans-serif;max-width:1000px;margin:auto;padding:0 12px}td,th{border:1px solid #ccc;padding:4px;vertical-align:top}
@@ -67,11 +70,13 @@ def human_checks(indicators, limit=10):
     return list(dict.fromkeys(c for c in map(human_check, ordered) if c))[:limit]
 
 
-def summary(result):
+def summary(result, case=None):
     """LLM summary from indicators only; cached on the result so Streamlit reruns don't re-bill the API."""
     if "summary" not in result:
         a, inds = result["assessment"], result["indicators"]
-        r = llm.ask_json(SUMMARY_PROMPT, json.dumps({"assessment": a, "indicators": [i.to_dict() for i in inds]}, default=str))
+        data = json.dumps({"assessment": a, "indicators": [i.to_dict() for i in inds]}, default=str)
+        r = llm.ask_json(SUMMARY_PROMPT, llm.untrusted("indicators", data), schema=SUMMARY_SCHEMA, name="summary",
+                         version=SUMMARY_VERSION, effort="low", case=case)
         top = sorted(inds, key=lambda i: -i.score)[:3]
         fallback = (f"{a['case']['label']} across {len(a['files'])} file(s). Strongest: "
                     + ("; ".join(f"{i.type} in {i.file}" for i in top) or "none")
@@ -86,4 +91,4 @@ def render(case, result):
     checks = human_checks(inds)
     return TEMPLATE.render(case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
                            integrity=result["integrity"], ingests=[e for e in log if e["action"] == "ingest"],
-                           log=log, checks=checks, summary=summary(result))
+                           log=log, checks=checks, summary=summary(result, case))

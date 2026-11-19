@@ -14,6 +14,21 @@ VIDEO_EXTS = AV_EXTS[:5]
 CAPTION_PROMPT = """You compare a caption with an image for a forensic reviewer.
 Return JSON: {"consistent": true|false, "mismatches": [{"claim": "<caption part>", "observed": "<what the image shows>"}], "confidence": 0..1}.
 Judge only whether the image content plausibly matches the caption. Do NOT judge whether the image is AI-generated or edited."""
+CAPTION_VERSION = "v2"
+CAPTION_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["consistent", "mismatches", "confidence"],
+                  "properties": {"consistent": {"type": "boolean"}, "confidence": {"type": "number"},
+                                 "mismatches": {"type": "array", "items": {
+                                     "type": "object", "additionalProperties": False, "required": ["claim", "observed"],
+                                     "properties": {"claim": {"type": "string"}, "observed": {"type": "string"}}}}}}
+
+
+def _ask_caption(context_text, images, case, note=""):
+    return llm.ask_json(CAPTION_PROMPT, llm.untrusted("caption", context_text) + note, images, schema=CAPTION_SCHEMA,
+                        name="caption_consistency", version=CAPTION_VERSION, effort="medium", case=case)
+
+
+def _conf(r):
+    return float(min(1.0, max(0.0, r.get("confidence", 0.5))))
 
 
 def _t(ind):
@@ -42,12 +57,12 @@ def caption_vs_images(context_text, case):
     for p in case.evidence():
         if p.suffix.lower() not in IMAGE_EXTS:
             continue
-        r = llm.ask_json(CAPTION_PROMPT, f"Caption/context: {context_text}", [p])
+        r = _ask_caption(context_text, [p], case)
         if r is None:
             return []  # offline
         case.log("caption_check", file=p.name, model=llm.MODEL, **r)
         for m in r.get("mismatches", []):
-            out.append(Indicator(p.name, "cross", "caption_image_mismatch", float(r.get("confidence", 0.5)), "medium",
+            out.append(Indicator(p.name, "cross", "caption_image_mismatch", _conf(r), "medium",
                                  f"Caption says '{m['claim']}', image shows: {m['observed']}.",
                                  location={"span": m["claim"]}, related=["context"],
                                  alt_explanations=["Caption is vague or figurative", "Model misread the scene"]))
@@ -64,12 +79,13 @@ def caption_vs_frames(context_text, case):
         if not frames:
             continue
         pick = [frames[i] for i in sorted(set(np.linspace(0, len(frames) - 1, 3).astype(int)))]
-        r = llm.ask_json(CAPTION_PROMPT, f"Caption/context: {context_text}\nThe images are frames from one video.", pick)
+        at = ", ".join(f"{int(f.stem[-4:]) - 1}s" for f in pick)  # A4: frame i (1-based) at (i - 1) s
+        r = _ask_caption(context_text, pick, case, f"\nThe images are frames from one video, at {at}.")
         if r is None:
             return []  # offline
         case.log("caption_frames_check", file=p.name, model=llm.MODEL, frames=[f.name for f in pick], **r)
         for m in r.get("mismatches", []):
-            out.append(Indicator(p.name, "cross", "caption_frame_mismatch", float(r.get("confidence", 0.5)), "medium",
+            out.append(Indicator(p.name, "cross", "caption_frame_mismatch", _conf(r), "medium",
                                  f"Caption says '{m['claim']}', video frames show: {m['observed']}.",
                                  location={"span": m["claim"]}, related=["context"],
                                  alt_explanations=["Caption is vague or figurative", "Model misread the scene",

@@ -2,7 +2,7 @@ pillow
 numpy
 jinja2
 streamlit
-openai
+openai==3.55.1
 opencv-python
 scenedetect
 imagehash

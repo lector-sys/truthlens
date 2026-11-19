@@ -122,11 +122,7 @@ def analyze_audio(wav, case, file_name, stem):
     y, sr = load(wav)
     flags = splice_detection(y, sr, file_name)
     spectrogram(y, sr, flags, case.artifact_path(f"{stem}_spec.png"))
-    try:
-        segs = llm.transcribe(wav)
-    except Exception as e:  # network / API error: no transcript, analysis continues
-        case.log("transcript_error", file=file_name, error=repr(e))
-        segs = None
+    segs = llm.transcribe(wav, case)  # None when offline or the call failed (logged as check_not_run)
     if segs is not None:
         case.artifact_path(f"{stem}_transcript.json").write_text(json.dumps(segs), encoding="utf-8")
         case.log("transcript", file=file_name, segments=len(segs))
