@@ -21,6 +21,7 @@ table{border-collapse:collapse;width:100%}img{max-width:220px}.note{color:#555}<
 <p><b>Overall:</b> {{ a.case.label }} (indicator strength {{ '%.2f' % a.case.p }}).</p>
 <p class="note">Automated indicators, not proof. All findings require human review.</p>
 <p class="note">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
+{% if provenance %}<p class="note">{{ provenance }} Model answers: {{ source }}.</p>{% endif %}
 <h2>Summary</h2><p>{{ summary }}</p>
 <h2>Evidence & integrity</h2>
 <table><tr><th>File</th><th>SHA-256</th><th>Unchanged since ingest</th><th>Assessment</th></tr>
@@ -98,6 +99,6 @@ def render(case, result):
     semantic = ", ".join(sorted({f"{e['model']}, prompt {e.get('prompt_version', '?')}" for e in calls})) or "none run"
     if skipped:
         semantic += f" (not run: {', '.join(skipped)})"
-    return TEMPLATE.render(calib=calib, semantic=semantic, case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
+    return TEMPLATE.render(calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(i, data_uri(i.artifact)) for i in inds],
                            integrity=result["integrity"], ingests=[e for e in log if e["action"] == "ingest"],
                            log=log, checks=checks, summary=summary(result, case))

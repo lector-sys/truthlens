@@ -7,7 +7,7 @@ import streamlit as st
 from PIL import Image, ImageDraw
 from rapidfuzz import fuzz
 from truthlens.vault import Case, CASES, sha256
-from truthlens import pipeline, report, fusion
+from truthlens import pipeline, report, fusion, llm
 
 IMAGE = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff")
 VIDEO = (".mp4", ".mov", ".mkv", ".webm", ".avi")
@@ -116,6 +116,20 @@ def mtime(case_id):
 cal = fusion.load_calibration()
 qp = st.query_params
 
+
+@st.fragment(run_every=30)
+def server_pill(fallback=()):
+    """GPU server status, checked at startup and every 30 s: grey when offline, amber when this case's answers came
+    from a fallback provider, else green."""
+    if "ollama" not in llm.PROVIDERS:
+        return
+    up, ms = llm.ping()
+    text, c = (("offline", "#64748B") if not up else (f"online · {ms} ms · fallback used: {', '.join(fallback)}", "#F2B544")
+               if fallback else (f"online · {ms} ms", "#4ADE80"))
+    md(f'<div style="text-align:right"><span class="pill" style="color:{c};border-color:{c}">GPU server: '
+       f'{e(llm.host("ollama"))} · {e(text)}</span></div>')
+
+
 # ---------- sidebar: case list ----------
 with st.sidebar:
     md('<h2 style="margin:0">🔎 TruthLens</h2><div class="muted small">Multimodal forensic workbench</div>')
@@ -130,6 +144,8 @@ with st.sidebar:
         qp.pop("file", None)
         st.rerun()
     st.caption("Automated indicators, not proof. A person reviews every finding.")
+
+server_pill(() if pick.startswith("＋") else tuple(llm.fallback_used(Case(pick).entries())))
 
 # ---------- intake ----------
 if pick.startswith("＋"):
@@ -146,7 +162,11 @@ if pick.startswith("＋"):
             rows.append(f'<div class="mono small">{e(f.name)} <span class="badge" style="background:#161E27;color:#8B98A5">'
                         f'{kind}</span> {hashlib.sha256(f.getvalue()).hexdigest()}</div>')
         md('<div class="panel"><div class="muted small">SHA-256 of each upload</div>' + "".join(rows) + "</div>")
-    if st.button("Analyze", type="primary", disabled=not files):
+    b1, b2 = st.columns([1, 6])
+    go = b1.button("Analyze", type="primary", disabled=not files)
+    fresh = b2.button("Analyze fresh", disabled=not files, help="Ask the models again instead of reusing cached answers")
+    if go or fresh:
+        llm.FRESH = fresh
         case = Case()
         ok = {f.name: sha256(case.ingest(f.name, f.getvalue())) == hashlib.sha256(f.getvalue()).hexdigest() for f in files}
         md("".join(f'<div class="mono small">{"✓" if v else "✗"} {e(n)}: stored copy {"matches" if v else "DOES NOT match"} '
@@ -161,7 +181,10 @@ if pick.startswith("＋"):
                     status.update(label=f"Running {step}…")
                 else:
                     st.write(f"{'✓' if state == 'done' else '⚠'} {step} · {time.time() - t0.get(step, time.time()):.1f}s")
-            pipeline.run(case, context, progress)
+            try:
+                pipeline.run(case, context, progress)
+            finally:
+                llm.FRESH = False
             status.update(label="Analysis complete", state="complete")
         qp["case"] = case.id
         st.rerun()
@@ -251,6 +274,8 @@ if screen == "Overview":
             vers = sorted({f'{x["model"]}, prompt {x.get("prompt_version", "?")}' for x in semantic})
             md(f'<div class="muted small" style="margin-top:12px">Semantic checks: {e("; ".join(vers))}'
                f'{" (from cache)" if all(x.get("cached") for x in semantic) else ""}</div>')
+        if prov := llm.provenance(log):
+            md(f'<div class="muted small">{e(prov)} Model answers: {e(res.get("source") or llm.source(log))}.</div>')
         bad = [f for f, ok in res["integrity"].items() if not ok]
         md('<div class="panel small" style="margin-top:12px">' + (f"✗ Integrity check FAILED: {e(', '.join(bad))}" if bad else
            f"✓ Integrity: all {len(res['integrity'])} evidence file(s) match their intake SHA-256.") + "</div>")
