@@ -1,0 +1,72 @@
+/* TruthLens design tokens: the only place colours, sizes, spacing, radii and motion are defined.
+   ui/theme.css, ui/components.py (which reads this file for SVG and image overlays) and the report all use these.
+   Contrast of every text/background pairing is checked by test_smoke.py (WCAG AA: 4.5:1 text, 3:1 large text/UI). */
+:root {
+  /* spacing scale (px) */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
+
+  /* type scale: 6 sizes, 2 weights */
+  --fs-xs: 12px; --fs-sm: 14px; --fs-md: 16px; --fs-lg: 20px; --fs-xl: 28px; --fs-2xl: 40px;
+  --fw-regular: 400; --fw-semibold: 600;
+  --lh-tight: 1.25; --lh-body: 1.5;
+  --font-ui: Inter, "Segoe UI", system-ui, sans-serif;
+  --font-head: "Space Grotesk", Inter, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, ui-monospace, monospace;
+  --font-icon: "Material Symbols Rounded";
+
+  /* surfaces and text */
+  --bg: #0D1117;
+  --surface-1: #151B23;
+  --surface-2: #1B2330;
+  --border: #263040;
+  --text: #E6EDF3;
+  --text-secondary: #C3CDD6;
+  --text-muted: #9AA7B4;
+  --accent: #4FD1C5;
+  --accent-ink: #0D1117;          /* text on an accent fill */
+  --accent-soft: #4FD1C524;       /* selected / hover tint (8-digit hex: colour + alpha) */
+  --focus: #4FD1C5;
+
+  /* status */
+  --success: #4ADE80;
+  --warning: #F2B544;
+  --danger: #F97352;
+  --info: #7AA2F7;
+  --neutral: #94A3B8;
+
+  /* the four indicator levels (No · Weak · Moderate · Strong) */
+  --lvl-no: #94A3B8;
+  --lvl-weak: #A3B18A;
+  --lvl-moderate: #F2B544;
+  --lvl-strong: #F97352;
+
+  /* evidence overlays and data marks */
+  --mark-video: #4FD1C5;
+  --mark-audio: #F2B544;
+  --mark-face: #A3B18A;
+  --mark-detector: #BB9AF7;
+  --mark-link: #F97352;
+  --mark-track: #263040;
+  --mark-off: #3B4252;
+
+  /* radii, border, shadow, motion */
+  --r-input: 6px; --r-chip: 6px; --r-button: 10px; --r-card: 14px; --r-pill: 999px;
+  --hairline: 1px solid var(--border);
+  --shadow: none;
+  --motion: 180ms ease-out;
+  --touch: 44px;
+
+  /* layout sizes */
+  --w-content: 1440px; --w-gate: 440px; --w-gauge: 240px; --w-text-min: 260px; --w-head-min: 320px; --w-kpi-min: 200px;
+  --w-state: 96px; --w-thumb-min: 72px; --w-trunc: 520px;
+  --h-kpi: 168px; --h-kpi-sm: 156px; --h-drop: 160px; --h-scroll: 640px; --h-button-sm: 36px; --h-nav: 40px; --logo: 40px;
+  --bw: 1px; --bw-strong: 2px; --r-mark: 4px; --track: .06em; --pulse: 1.4s;
+
+  /* light print theme (HTML report) */
+  --print-bg: #FFFFFF;
+  --print-text: #1A2230;
+  --print-muted: #4B5563;
+  --print-border: #D5DBE3;
+  --print-surface: #F4F6F9;
+  --print-accent: #0F766E;
+}

@@ -34,6 +34,20 @@ def app_run(**env):
     return eval(out.stdout.strip().splitlines()[-1])
 
 
+def ui_checks():
+    """Design system: every text/background token pairing passes WCAG AA; no hard-coded colours outside ui/tokens.css."""
+    from ui import components as ui
+    T = {k: v.strip()[:7] for k, v in ui.T.items() if v.strip().startswith("#")}
+    pairs = [(f, b, 4.5) for f in ("text", "text-secondary", "text-muted", "success", "warning", "danger", "info", "neutral", "accent",
+                                    "lvl-no", "lvl-weak", "lvl-moderate", "lvl-strong") for b in ("bg", "surface-1", "surface-2")]
+    pairs += [("accent-ink", "accent", 4.5)] + [(f, b, 4.5) for f in ("print-text", "print-muted", "print-accent")
+                                                for b in ("print-bg", "print-surface")]
+    bad = [(f, b, round(ui.contrast(T[f], T[b]), 2)) for f, b, need in pairs if ui.contrast(T[f], T[b]) < need]
+    assert not bad, bad
+    for f in ("app.py", "ui/components.py", "ui/theme.css"):
+        assert not re.search(r"#[0-9A-Fa-f]{6}", Path(f).read_text(encoding="utf-8")), f"hard-coded colour in {f}"
+
+
 def public_mode_checks():
     """Public mode: access code, per-session isolation, upload limits, auto-delete; off = the local workspace as before."""
     off = app_run()
@@ -311,7 +325,7 @@ try:
                    "; signer not checked against a trust list)."), banner
             h = report.render(cc, r)
             assert banner[0].replace("'", "&#39;") in h and report.CREDENTIALS_NOTE in h
-            assert h.index("Provenance (") < h.index("<b>Overall:</b>") < h.index(report.CREDENTIALS_NOTE), "order"
+            assert h.index("Provenance (") < h.index("<b>Label:</b>") < h.index(report.CREDENTIALS_NOTE), "order"
             assert r["headline"] == fusion.headline(r["assessment"], r["coverage"])  # label not touched by the banner
         finally:
             cc.delete()
@@ -720,6 +734,7 @@ try:
     assert few["weight"] is None and few["need"] == {"untouched": 1, "ai": 0} and few["n_untouched"] == 9, few
     enough = calibrate.learned_fit(rows(10, 10, fire_real=2), "image")
     assert enough["weight"] > 0 and enough["false_alarms"] == 2, enough
+    ui_checks()
     public_mode_checks()
     print("OK", sorted(types), res["assessment"]["case"])
 finally:

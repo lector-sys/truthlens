@@ -1,5 +1,5 @@
 """OWNER D. HTML forensic report: self-contained (artifacts embedded), human checks, summary from indicators only."""
-import base64, json, mimetypes, re
+import base64, json, mimetypes, re, time
 from pathlib import Path
 from jinja2 import Template
 from . import llm, fusion
@@ -15,57 +15,77 @@ SUMMARY_SCHEMA = {"type": "object", "additionalProperties": False, "required": [
                   "properties": {"summary": {"type": "string"}}}
 
 TEMPLATE = Template("""<!DOCTYPE html><html><head><meta charset="utf-8"><title>TruthLens report {{ case.id }}</title>
-<style>{{ fonts }}
-/* print-friendly light version of the dashboard's "Evidence Light Table" theme: white page, same fonts and tags */
-body{font:15px/1.5 Inter,"Segoe UI",system-ui,sans-serif;color:#1A202C;background:#fff;max-width:1040px;margin:auto;padding:0 16px 40px}
-h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;letter-spacing:-.01em;color:#0D1117}h1{font-size:1.7rem}
-h2{border-bottom:2px solid #0D1117;padding-bottom:4px;margin-top:2em}
-code,pre,.tag{font-family:"JetBrains Mono",Consolas,monospace;font-variant-numeric:tabular-nums}pre{font-size:11px;white-space:pre-wrap}
-td,th{border:1px solid #CBD2DA;padding:5px 6px;vertical-align:top;font-size:13px}th{background:#F1F4F7;text-align:left}
-table{border-collapse:collapse;width:100%;table-layout:fixed}td img{width:100%;max-width:150px}td{overflow-wrap:anywhere}.note{color:#4A5563}
-.tag{display:inline-block;position:relative;padding:2px 8px 2px 20px;border:1.5px solid #2C7A7B;border-radius:3px 8px 8px 3px;
-color:#1D5F60;font-weight:600;font-size:12px;white-space:nowrap}
-.tag:before{content:"";position:absolute;left:6px;top:50%;margin-top:-4px;width:8px;height:8px;border-radius:50%;border:1.5px solid #2C7A7B}
-.uncal{border-style:dashed}
-@media print{h2{break-after:avoid}tr{break-inside:avoid}body{max-width:none}}</style>
+<style>{{ fonts }}{{ tokens }}
+/* light print theme of the dashboard: same tokens (ui/tokens.css), wording and finding layout */
+body{font:var(--fs-sm)/var(--lh-body) var(--font-ui);color:var(--print-text);background:var(--print-bg);max-width:var(--w-content);
+  margin:auto;padding:var(--s-6) var(--s-5) var(--s-7)}
+h1,h2,h3{font-family:var(--font-head);font-weight:var(--fw-semibold);color:var(--print-text);line-height:var(--lh-tight)}
+h1{font-size:var(--fs-xl);margin:0 0 var(--s-2)}h2{font-size:var(--fs-lg);margin:var(--s-6) 0 var(--s-3);padding-bottom:var(--s-2);
+  border-bottom:var(--bw) solid var(--print-border)}h3{font-size:var(--fs-md);margin:var(--s-5) 0 var(--s-2)}
+.mono,code{font-family:var(--font-mono);font-variant-numeric:tabular-nums}.muted{color:var(--print-muted)}
+.eyebrow{font:var(--fw-semibold) var(--fs-xs) var(--font-ui);letter-spacing:var(--track);text-transform:uppercase;color:var(--print-muted)}
+.box{border:var(--bw) solid var(--print-border);border-radius:var(--r-card);padding:var(--s-3) var(--s-4);margin:var(--s-3) 0;background:var(--print-surface)}
+.box.warn{border-color:var(--warning)}.box.danger{border-color:var(--danger)}.box.prov{border-color:var(--mark-detector)}
+table{border-collapse:collapse;width:100%}th{font:var(--fw-semibold) var(--fs-xs) var(--font-ui);color:var(--print-muted);text-align:left;
+  background:var(--print-surface);padding:var(--s-2) var(--s-3)}td{padding:var(--s-2) var(--s-3);border-top:var(--bw) solid var(--print-border);
+  vertical-align:top;font-size:var(--fs-sm);overflow-wrap:break-word;word-break:normal}
+.finding{display:grid;grid-template-columns:var(--w-thumb-min) 1fr var(--w-gauge);gap:var(--s-4);padding:var(--s-3) 0;
+  border-top:var(--bw) solid var(--print-border);break-inside:avoid}
+.finding .id{font:var(--fw-semibold) var(--fs-sm) var(--font-mono);color:var(--print-accent)}.finding .t{font-weight:var(--fw-semibold);font-size:var(--fs-md)}
+.finding .meta{font:var(--fs-xs) var(--font-mono);color:var(--print-muted);margin:var(--s-1) 0}.finding p{margin:var(--s-1) 0}
+.finding img{width:100%;border-radius:var(--r-chip);border:var(--bw) solid var(--print-border)}
+.chip{display:inline-block;font:var(--fw-semibold) var(--fs-xs) var(--font-ui);padding:0 var(--s-2);border:var(--bw) solid currentColor;
+  border-radius:var(--r-chip);margin-left:var(--s-2);vertical-align:middle}.chip.counted{color:var(--print-accent)}.chip.uncal{color:var(--print-muted)}
+.log td{font:var(--fs-xs) var(--font-mono);overflow-wrap:anywhere}
+@media print{h2{break-after:avoid}tr{break-inside:avoid}body{max-width:none;padding:0}}</style>
 </head><body>
-<h1>TruthLens forensic report: {{ case.id }}</h1>
-{% if missing %}<p style="background:#F97352;color:#000;padding:8px;font-weight:bold">{{ missing }}</p>{% endif %}
-{% for c in credentials %}<p style="background:#EDE9FE;border-left:4px solid #7C3AED;padding:8px"><b>{{ c|e }}</b></p>{% endfor %}
-{% if headline.startswith(('Not analysed', 'Failed')) %}<p style="color:#64748B"><b>Overall: {{ headline }}.</b> No label is given.</p>
-{% else %}<p><b>Overall:</b> {{ headline }} (indicator strength {{ '%.2f' % a.case.p }}).</p>{% endif %}
-{% if credentials %}<p class="note">{{ credentials_note }}</p>{% endif %}
-{% if coverage_line %}<p style="color:#64748B">{{ coverage_line }}</p>{% endif %}
-<p class="note">Automated indicators, not proof. All findings require human review.</p>
-<p class="note">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
-{% if provenance %}<p class="note">{{ provenance }} Model answers: {{ source }}.</p>{% endif %}
+<div class="eyebrow">TruthLens · forensic report</div>
+<h1>Case {{ case.id }}</h1>
+{% if missing %}<div class="box danger"><b>{{ missing }}</b></div>{% endif %}
+{% for c in credentials %}<div class="box prov"><b>{{ c|e }}</b></div>{% endfor %}
+{% if headline.startswith(('Not analysed', 'Failed')) %}<p><b>Label:</b> {{ headline }}. No label is given.</p>
+{% else %}<p><b>Label:</b> {{ headline }} (fused strength {{ '%.2f' % a.case.p }}).</p>{% endif %}
+{% if credentials %}<p class="muted">{{ credentials_note }}</p>{% endif %}
+{% if coverage_line %}<p class="muted">{{ coverage_line }}</p>{% endif %}
+<div class="box warn">Automated indicators, not proof. Every finding needs human review.</div>
+<p class="muted">Fusion weights: {{ calib }}. Semantic checks: {{ semantic }}.</p>
+{% if provenance %}<p class="muted">{{ provenance }} Model answers: {{ source }}.</p>{% endif %}
 <h2>Summary</h2><p>{{ summary }}</p>
-<p><b>Recommended human checks</b></p><ol>{% for c in checks[:5] %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
-<h2>Evidence & integrity</h2>
-<table><tr><th>File</th><th>SHA-256</th><th>Unchanged since ingest</th><th>Assessment</th></tr>
-{% for e in ingests %}<tr><td>{{ e.file }}</td><td><code>{{ e.sha256 }}</code></td><td>{{ 'yes' if integrity.get(e.file) else 'NO' }}</td>
+<h3>Recommended human checks</h3><ol>{% for c in checks[:5] %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
+<h2>Evidence and integrity</h2>
+<table><tr><th>File</th><th>SHA-256</th><th>Unchanged since intake</th><th>Label for this file</th></tr>
+{% for e in ingests %}<tr><td>{{ e.file }}</td><td class="mono" style="overflow-wrap:anywhere">{{ e.sha256 }}</td><td>{{ 'Yes' if integrity.get(e.file) else 'No: hash changed' }}</td>
 <td>{{ file_headline(e.file) }}</td></tr>{% endfor %}</table>
-{% for e in conversions %}<p class="note">{{ e.file }} was analysed via {{ e.to }} (converted with {{ e.tool }}, sha256 {{ e.sha256 }}):
+{% for e in conversions %}<p class="muted">{{ e.file }} was analysed via {{ e.to }} (converted with {{ e.tool }}, SHA-256 {{ e.sha256 }}):
 compression-based checks (ELA) see the conversion, not the original. The evidence hash is the original file's.</p>{% endfor %}
-<h2>Flagged evidence</h2>
-{% if not indicators %}<p>No indicators were raised.</p>{% endif %}
+<h2>Findings</h2>
+{% if not indicators %}<p>No findings. That does not show the media is unaltered.</p>{% endif %}
 {% for g, what in groups.items() %}{% set grp = rows|selectattr('1.type', 'in', group_types[g])|list %}{% if grp %}
 <h3>{{ g }}: {{ what }}</h3>
-<table><colgroup><col style="width:72px"><col style="width:11%"><col style="width:12%"><col style="width:10%"><col style="width:8%"><col><col style="width:13%"><col style="width:16%"><col style="width:120px"></colgroup>
-<tr><th>Tag</th><th>File</th><th>Indicator</th><th>Location</th><th>Score / reliability</th><th>Why</th><th>Could also be</th><th>Recommended check</th><th>Evidence</th></tr>
-{% for t, i, img in grp %}<tr><td><span class="tag{{ '' if calibrated(i) else ' uncal' }}">{{ t }}</span></td><td>{{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %}</td><td>{{ i.modality }} · {{ i.type }}</td>
-<td>{{ where(i.location) }}</td><td>{{ '%.2f' % i.score }} / {{ i.reliability }}{% if not calibrated(i) %}<br><i>{{ uncal }}</i>{% endif %}</td><td>{{ i.explanation }}</td>
-<td>{{ i.alt_explanations|join('; ') }}</td><td>{{ recommended(i)|join('; ') }}</td><td>{% if img %}<img src="{{ img }}" alt="{{ i.type }} artifact">{% endif %}</td></tr>{% endfor %}</table>{% endif %}{% endfor %}
+{% for t, i, img in grp %}<div class="finding"><div class="id">{{ t }}</div><div>
+<div class="t">{{ name(i.type) }}<span class="chip {{ 'counted' if calibrated(i) else 'uncal' }}">{{ 'Counted' if calibrated(i) else 'Uncalibrated' }}</span></div>
+<div class="meta">{{ i.modality }} · {{ i.file }}{% if i.related %} ↔ {{ i.related|join(', ') }}{% endif %} · {{ where(i.location) }} · score {{ '%.2f' % i.score }} · reliability {{ i.reliability }}</div>
+<p>{{ i.explanation }}</p>{% if not calibrated(i) %}<p class="muted">{{ uncal }}</p>{% endif %}
+<p><b>Could also be:</b> {{ i.alt_explanations|join('; ') }}</p><p><b>What to check:</b> {{ recommended(i)|join('; ') }}</p></div>
+<div>{% if img %}<img src="{{ img }}" alt="{{ name(i.type) }}: evidence artifact for {{ t }}">{% endif %}</div></div>{% endfor %}{% endif %}{% endfor %}
 <h2>All recommended human checks</h2><ol>{% for c in checks %}<li>{{ c }}</li>{% else %}<li>Spot-check the original files; absence of indicators is not proof of integrity.</li>{% endfor %}</ol>
 <h2>Limitations</h2><ul>
-<li>Detectors are heuristics tuned on a small team-made test set; reliability labels reflect that, not a guarantee.</li>
+<li>Checks are heuristics tuned on a small team-made test set; reliability labels reflect that, not a guarantee.</li>
 <li>Re-compression, resizing and platform uploads can create or hide indicators.</li>
 <li>{{ align_rule }}</li>
 <li>The language model reads text, compares captions with images and lists visible artifacts with their location; it is never asked to judge authenticity.</li>
 <li>Fully generated media without provenance metadata or visible artifacts may show no indicators at all.</li>
 <li>Absence of indicators does not prove the media is unaltered.</li></ul>
-<h2>Analysis log</h2><pre>{% for e in log %}{{ e }}
-{% endfor %}</pre></body></html>""")
+<h2>Custody log</h2><table class="log"><tr><th>Time</th><th>Action</th><th>Details</th></tr>
+{% for e in log %}<tr><td style="white-space:nowrap">{{ when(e.ts) }}</td><td>{{ e.action|replace('_', ' ') }}</td>
+<td>{% for k, v in e.items() if k not in ('ts', 'action') %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>{% endfor %}</table>
+</body></html>""")
+TOKENS = Path(__file__).resolve().parent.parent / "ui" / "tokens.css"
+
+
+def _when(ts):
+    lt = time.localtime(ts)
+    return f"{lt.tm_mday} {time.strftime('%b %Y, %H:%M:%S', lt)}"
 
 
 FONTS = Path(__file__).resolve().parent.parent / "static" / "fonts"
@@ -220,6 +240,7 @@ def render(case, result):
     return TEMPLATE.render(missing=fusion.MISSING if fusion.missing() else "", recommended=recommended, where=where, calibrated=fusion.calibrated, uncal=fusion.UNCALIBRATED, headline=result.get("headline") or fusion.headline(a, cov), credentials=content_credentials(case, inds), credentials_note=CREDENTIALS_NOTE, align_rule=fusion.ALIGN_RULE, coverage_line=pipeline.coverage_line(cov), groups=groups,
                            group_types=group_types, file_headline=lambda f: fusion.headline(a, cov, f),
                            conversions=[e for e in log if e["action"] == "converted"],
-                           calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(t, i, data_uri(i.artifact)) for t, i in tagged(inds)], fonts=font_faces(),
+                           calib=calib, semantic=semantic, provenance=llm.provenance(log), source=llm.source(log), case=case, a=result["assessment"], indicators=inds, rows=[(t, i, data_uri(i.artifact)) for t, i in tagged(inds)], fonts=font_faces(), tokens=TOKENS.read_text(encoding='utf-8') if TOKENS.exists() else '',
+                           when=_when, name=lambda t: re.sub(r'\b(Ela|Exif|Av|Ai|Xmp|C2pa)\b', lambda m: {'Av': 'A/V', 'C2pa': 'C2PA'}.get(m[0], m[0].upper()), t.replace('_', ' ').capitalize()),
                            integrity=result["integrity"], ingests=[e for e in log if e["action"] == "ingest"],
                            log=log, checks=checks, summary=summary(result, case))
