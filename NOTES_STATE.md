@@ -306,3 +306,8 @@ B and C must `git pull origin main` before more work. No force-pushes.
 - Image detector v2 on them: 3/16 at or above 0.6579 (hit 19%, 7%-43%); false alarms 1/29 phone hold-out. Image now meets 10 + 10, weight 0.64. Video and audio: 0 AI rows, uncalibrated.
 - Caveat: weights are fitted on all own rows including these 16 (no separate held-out split for learned yet), so their labels are partly in-sample.
 - Calibration n=60 (SYNTHETIC stamp, placeholders still present); held-out caught 6/16, false alarms 4/7.
+
+## Web AI video + AI audio rows (2026-11-20)
+- 13 Seedance 2.5 videos downloaded from imagine.art's generator page (ai_web_vid_01..13, ai_video, source=web_copy). Video detector v2: 2/13 at or above 0.6614 (scores 0.92, 1.00); 0/23 false alarms. Video now meets 10 + 10: weight 0.72.
+- Audio: kept 3 Pixabay clips the uploader titles as AI voices (web_copy, weak confirmation) + 1 ElevenLabs clone of a team member's own voice (own_generation), all cloned_voice. Skipped 10 Pixabay "ai voice" search results that are not confirmed AI speech (3 tagged "no-ai", sound effects, cat, fireplace, beat). Audio detector: 2/4 hit, 10/116 false-alarm windows; 4 AI rows, still needs 6, uncalibrated.
+- All 33 new SHA-256s are in testset/exclude_from_training.sha256. Calibration n=77; held-out 11/23 caught, 2/7 false alarms.
