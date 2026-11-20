@@ -299,3 +299,10 @@ B and C must `git pull origin main` before more work. No force-pushes.
 - Layout: sidebar nav (Overview · Analysis · Evidence viewer · Calibration · Chain of custody), current-case card, top bar with a service status pill (llm.services(): language model, transcription, trained detectors), KPI overview. Display only: result.json, labels and weights of all 32 cases byte-identical before/after.
 - Integrity shows "Verified" only after an explicit Verify (logged re-hash); the custody stamp uses the same rule.
 - Public mode (TRUTHLENS_PUBLIC=1, truthlens/public.py): access code, cases_public/<session tag>/, limits, 24 h cleanup, FIFO queue, scrubbed hosts/addresses/paths, reference-only errors. Rate counters are in memory (reset on restart; one process). Behind a reverse proxy, st.context.ip_address is the proxy's address.
+
+## Own AI images: image detector calibrated (2026-11-20)
+- 16 team-generated images (ChatGPT / Gemini, 20 Nov 2026) added as ai_own_img_01..16, ai_generated, source=own_generation; labels.csv gained `source` and `confirmation` columns. Only ai_own_img_01 carries C2PA metadata naming ChatGPT; the other 15 are WhatsApp copies, generator not recorded per file.
+- Their SHA-256s are in testset/exclude_from_training.sha256 for the detector server (never train on them).
+- Image detector v2 on them: 3/16 at or above 0.6579 (hit 19%, 7%-43%); false alarms 1/29 phone hold-out. Image now meets 10 + 10, weight 0.64. Video and audio: 0 AI rows, uncalibrated.
+- Caveat: weights are fitted on all own rows including these 16 (no separate held-out split for learned yet), so their labels are partly in-sample.
+- Calibration n=60 (SYNTHETIC stamp, placeholders still present); held-out caught 6/16, false alarms 4/7.
