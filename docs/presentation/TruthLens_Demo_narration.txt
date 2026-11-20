@@ -1,0 +1,13 @@
+TruthLens demo narration (paste each line into ElevenLabs; start times are where each line begins in TruthLens_Demo.mp4)
+0:00  [your ElevenLabs clip]
+0:02  This is TruthLens, our multimodal forensic workbench, built by team UNEX.
+0:09  The overview shows a case at a glance: the media analysed, the findings, how many checks are calibrated, and the integrity of the evidence.
+0:20  Let's start a new analysis.
+0:24  We add three files: an A I generated photo, an A I generated video made with Seedance, and an A I voice clip.
+0:33  When we press analyze, every file is hashed and stored read only. Then forensic checks run on each media type, and our trained detectors score the files on our private G P U server.
+0:48  Each step is logged in the chain of custody, so the analysis can be audited later.
+1:10  The result: strong indicators of manipulation or synthetic generation. The gauge shows the level, what the label mostly comes from, and which checks ran.
+1:23  Each finding is listed with its media and a short explanation. Opening one jumps straight to its location in the evidence viewer.
+1:34  Here we see the frames, the timeline of flags, and the trained detector's score over time.
+1:42  Finally, we export the self contained report, with every finding, its benign explanations, and the evidence hashes.
+1:51  TruthLens gives automated indicators, not proof. A person reviews every finding.

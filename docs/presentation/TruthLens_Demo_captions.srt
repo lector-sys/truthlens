@@ -1,0 +1,44 @@
+1
+00:00:00,000 --> 00:00:09,746
+TruthLens · from Team UNEX · Team number 144 · InnovEdge Hackathon 2026
+
+2
+00:00:09,796 --> 00:00:20,824
+The forensic overview: media, findings, calibrated checks, integrity
+
+3
+00:00:20,874 --> 00:00:24,026
+Start a new analysis
+
+4
+00:00:24,076 --> 00:00:33,675
+Adding an AI photo, an AI video and an AI voice clip
+
+5
+00:00:33,725 --> 00:00:48,118
+Each file is hashed (SHA-256) and stored read-only
+
+6
+00:00:48,168 --> 00:01:10,790
+Every step is logged in the chain of custody
+
+7
+00:01:10,840 --> 00:01:23,180
+Result: Strong indicators of manipulation or synthetic generation
+
+8
+00:01:23,230 --> 00:01:34,910
+Each finding links to its exact location in the evidence
+
+9
+00:01:34,960 --> 00:01:42,180
+Evidence viewer: frames, timeline and trained-detector scores
+
+10
+00:01:42,230 --> 00:01:51,824
+Export the self-contained report
+
+11
+00:01:51,874 --> 00:02:00,965
+Automated indicators, not proof. A person reviews every finding.
+
