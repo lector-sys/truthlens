@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent / "testset"
 HISTORY = Path(__file__).resolve().parent / "calibration" / "history"  # one dated copy per run
 POSITIVE = tuple(name for _, name in fusion.LEVELS[:2])  # Strong, Moderate
 FIRE = 0.25  # a type "fired" on a file when its strongest flag reaches this score; fainter flags are shown, not counted
-LABELS = ("real", "manipulated")  # TASKS.md §5 column values; shown as "untouched" / "manipulated"
+LABELS = ("real", "manipulated")  # docs/TASKS.md §5 column values; shown as "untouched" / "manipulated"
 GENERATED = ("ai_generated", "cloned_voice", "ai_video")  # rows must name the tool in the `generator` column
 MANIPULATIONS = {"none", "splice", "copy_move", "ai_generated", "cloned_voice", "ai_video", "video_cut", "voice_clone", "audio_splice",
                  "wrong_caption", "wrong_date", "wrong_quote"}

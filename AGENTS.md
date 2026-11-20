@@ -10,7 +10,7 @@ forensics tool** that takes image / video / audio evidence plus context text, fi
 manipulation, cross-checks signals between media, and outputs an explainable, evidence-linked forensic report
 with calibrated confidence. It **never** declares media "fake" or "real"; a human reviews every finding.
 
-Pipeline (see `flowchart.html`):
+Pipeline (see `docs/flowchart.html`):
 `upload (app.py) → evidence vault (vault.py) → pipeline.py routes by extension → analyzers/* each return
 list[Indicator] → crossmodal.py adds linked indicators → fusion.py → review UI (app.py) + HTML report (report.py)`
 
@@ -66,9 +66,9 @@ ffprobe(path) -> dict ; encoder_tags(meta) -> dict
 
 ## 4. Hard rules
 
-1. **Scope:** implement only the functions assigned to you in `TASKS.md`. No extra features, endpoints, classes,
+1. **Scope:** implement only the functions assigned to you in `docs/TASKS.md`. No extra features, endpoints, classes,
    config systems, CLI flags, databases, auth, Docker, or refactors.
-2. **No new files** except the ones `TASKS.md` lists, plus the dashboard theme: `ui/theme.css` (all custom CSS, one
+2. **No new files** except the ones `docs/TASKS.md` lists, plus the dashboard theme: `ui/theme.css` (all custom CSS, one
    file) and bundled local fonts in `static/fonts/` (woff2 under the SIL OFL with their licence files; served by
    Streamlit's static serving, never from a CDN), the trained-detector integration: `truthlens/learned.py`, and public demo mode (access code, per-session cases, limits): `truthlens/public.py`.
    No new folders in `truthlens/`.

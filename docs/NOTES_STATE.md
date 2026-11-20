@@ -24,7 +24,7 @@
 - Nothing else: semantic checks and transcripts now run on D's own GPU server (see below).
 
 ## Status (2026-11-19, GPU server connected)
-- **Models run on `aprameya`** (home GPU server, reached over Tailscale): Ollama `truthlens-vl` (qwen3-vl 8B Q4_K_M) for
+- **Models run on the home GPU PC** (home GPU server, reached over Tailscale): Ollama `truthlens-vl` (qwen3-vl 8B Q4_K_M) for
   claims / caption↔image / caption↔frames / summary; whisper.cpp server (large-v3-turbo) for transcripts. Set in `.env`
   (git-ignored, see `.env.example`). Provider order `LLM_PROVIDER`, then `LLM_PROVIDERS`; default **ollama only**.
   Groq/OpenAI run only if listed there (AGENTS §4.3: evidence goes to a cloud provider only if the user enables it).

@@ -1,2 +1,2 @@
 @AGENTS.md
-@TASKS.md
+@docs/TASKS.md

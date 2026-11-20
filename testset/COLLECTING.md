@@ -2,7 +2,7 @@
 
 Goal: **≥ 15 manipulated + ≥ 15 untouched per media type** (image, video, audio), plus **≥ 15 each of `ai_generated`
 images, `cloned_voice` audio and `ai_video` clips, each from ≥ 3 different tools**. `python calibrate.py` prints the current counts and every label problem. Media goes in `testset/media/` (git-ignored, share via the team Drive);
-one row per file in `labels.csv` (columns in TASKS.md §5, plus `generator` = the tool, for `ai_generated` / `cloned_voice` / `ai_video` rows). Delete the `ph_` placeholder rows once real files exist.
+one row per file in `labels.csv` (columns in docs/TASKS.md §5, plus `generator` = the tool, for `ai_generated` / `cloned_voice` / `ai_video` rows). Delete the `ph_` placeholder rows once real files exist.
 
 ## Sources (consent first: AGENTS.md §4.11)
 - **Untouched**: your own phone photos / videos / voice memos, straight off the device (no app edits, EXIF intact).

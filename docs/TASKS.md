@@ -3,7 +3,7 @@
 **InnovEdge Hackathon 2026 · Problem Statement 04 · 24 hours · team of 4**
 
 Read sections 1–3 once. Then go straight to **your** section in 4. Rules for every human and AI are in
-[`AGENTS.md`](AGENTS.md); if anything here seems to conflict with it, `AGENTS.md` wins.
+[`AGENTS.md`](../AGENTS.md); if anything here seems to conflict with it, `AGENTS.md` wins.
 
 ---
 
@@ -56,8 +56,8 @@ truthlens/
 ├── app.py                  D  Streamlit UI: upload → review → download report
 ├── calibrate.py            D  (new) runs the labelled test set, prints the accuracy table for each detector
 ├── test_smoke.py           D  must print OK before every commit
-├── AGENTS.md / TASKS.md       rules / this file
-├── flowchart.html             architecture + 24h plan (open in browser)
+├── AGENTS.md / docs/TASKS.md  rules / this file
+├── docs/flowchart.html        architecture + 24h plan (open in browser)
 ├── testset/labels.csv     all labels for the test set (media itself is NOT in git, it's shared via Drive)
 └── truthlens/
     ├── indicator.py        D  the shared Indicator dataclass (FROZEN)

@@ -1,11 +1,40 @@
-cases/
-__pycache__/
-.venv/
-testset/media/
+# ---- secrets: never commit ----
 .env
-cache/
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
 
-# dashboard screenshots: only the README picks are tracked
+# ---- runtime data (evidence, cases, model-answer cache) ----
+cases/
+cases_public/
+cache/
+# our own recordings and test media stay local; labels.csv and the hash list are tracked
+testset/media/
+
+# ---- Python / tooling ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.pytest_cache/
+*.log
+.claude/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# ---- deliverables ----
+# the demo video carries a team member's cloned voice: kept local, not published
+docs/presentation/*.mp4
+
+# ---- dashboard screenshots: only the README / report picks are tracked ----
 docs/screenshots/v2/*
 !docs/screenshots/v2/results_demo2_1280x720.png
 !docs/screenshots/v2/flow_1280x720_analyzing.png
@@ -20,4 +49,3 @@ docs/screenshots/v3/*
 !docs/screenshots/v3/calibration_1280x720.png
 !docs/screenshots/v3/custody_1280x720.png
 !docs/screenshots/v3/overview_390x844.png
-cases_public/

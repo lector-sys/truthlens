@@ -1,5 +1,5 @@
 """OWNER C. Text analysis: claim extraction (regex fallback offline) from the caption that came with the media and from
-text evidence files (.txt / .md). No AI-authorship detection (out of scope, TASKS.md). Emit location={"span": "..."}."""
+text evidence files (.txt / .md). No AI-authorship detection (out of scope, docs/TASKS.md). Emit location={"span": "..."}."""
 import re
 from pathlib import Path
 from .. import llm

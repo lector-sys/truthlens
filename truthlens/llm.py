@@ -43,7 +43,7 @@ _clients = {}
 
 
 def host(provider):
-    """Short host name for reports: 'aprameya' for http://aprameya.tailxxxx.ts.net:11434/v1."""
+    """Short host name for reports: 'gpu-host' for http://gpu-host.tailxxxx.ts.net:11434/v1."""
     url = WHISPER_URL if provider == "whisper" else URLS.get(provider)
     return (urlparse(url).hostname or "").split(".")[0] if url else ("api.openai.com" if provider == "openai" else "?")
 

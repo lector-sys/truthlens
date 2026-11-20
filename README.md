@@ -1,96 +1,82 @@
 # TruthLens
 
-Multimodal forensic workbench: image, video and audio evidence plus the caption that came with it go in; located,
-explained, cross-checked **indicators** come out, fused into a cautious label (*No significant / Weak / Moderate /
-Strong indicators of manipulation or synthetic generation*, or *Not analysed* / *Limited analysis* when checks could not
-run) with calibrated weights and a full chain of custody. A person reviews every finding.
+**A multimodal forensic workbench for image, video and audio evidence.**
+Team UNEX (team 144) · InnovEdge Hackathon 2026 · Problem Statement 04
 
-## Setup (5 commands, Windows PowerShell)
+Upload the media and the caption that came with it. TruthLens hashes and preserves the evidence, runs explainable
+checks on every file, cross-checks the media against each other and against the claims, and fuses the results into a
+cautious, calibrated label:
+
+> *No significant / Weak / Moderate / Strong indicators of manipulation or synthetic generation*
+
+Every finding points to where it is (region, frame, time span or text), explains why, and lists benign alternatives.
+Automated indicators, not proof: a person reviews every finding.
+
+![Forensic overview](docs/screenshots/v3/overview_1280x720.png)
+
+## Quick start
 ```
-git clone https://github.com/lector-sys/truthlens; cd truthlens
-python -m pip install -r requirements.txt           # + ffmpeg/ffprobe on PATH
-copy .env.example .env                              # fill the GPU server URLs (docs/SERVER_SETUP.md)
-python test_smoke.py                                # must print OK
-python demo.py                                      # seeds demo1-3, opens the dashboard (--offline: cache only)
+git clone https://github.com/lector-sys/truthlens && cd truthlens
+pip install -r requirements.txt        # plus ffmpeg / ffprobe on PATH
+copy .env.example .env                 # add your model-server URLs
+python test_smoke.py                   # prints OK
+python demo.py                         # opens the dashboard with three demo cases
 ```
-
-| Variable | Default | Used for |
-|---|---|---|
-| `LLM_PROVIDER` / `LLM_PROVIDERS` | `ollama` | providers tried in order; `groq` / `openai` (cloud) only if listed here |
-| `OLLAMA_URL`, `TRUTHLENS_TEXT_MODEL`, `TRUTHLENS_VISION_MODEL` | none, `truthlens-vl` | claims, caption↔image/frames, visual artifacts, summary on the team GPU server |
-| `WHISPER_URL` | none | transcripts with word timestamps (whisper.cpp server) |
-| `C2PATOOL` | `c2patool` on PATH | full path to c2patool, if it isn't on the PATH the dashboard was started with |
-| `GROQ_API_KEY`, `GROQ_MODEL`, `OPENAI_API_KEY`, `TRUTHLENS_MODEL` | none | optional cloud fallbacks (evidence leaves the laptop) |
-
-Without a reachable server, model checks come from `cache/` or are recorded as *not run*, and the label says so.
-
-### c2patool (verified C2PA manifests)
-Without it, C2PA manifests are found by a byte scan and reported as "C2PA manifest present (not verified)". With it,
-`synthetic_provenance` reads and validates the manifest: "verified by c2patool: signature and content hashes valid,
-signed by <issuer>", "on the trust list" when c2patool has one configured, or "failed verification (<codes>)".
-Install the official release (Content Authenticity Initiative, `contentauth/c2pa-rs`, v0.27.23) on Windows:
-```powershell
-$v = "c2patool-v0.27.23"
-gh release download $v -R contentauth/c2pa-rs -p "$v-x86_64-pc-windows-msvc.zip" -D "$env:TEMP\c2patool"
-# check: Get-FileHash ...zip must equal the sha256 "digest" GitHub shows for the asset
-# (v0.27.23: b3fba7bdfb6f9c0b43d47e50d1db66785404f3e4b687e7127991157852b29cb5)
-Expand-Archive "$env:TEMP\c2patool\$v-x86_64-pc-windows-msvc.zip" "$env:LOCALAPPDATA\Programs\c2patool" -Force
-[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:LOCALAPPDATA\Programs\c2patool\c2patool", "User")
-c2patool --version          # in a NEW terminal; restart the dashboard afterwards
-```
-Programs started before the PATH change don't see it: set `C2PATOOL=<full path to c2patool.exe>` in `.env` instead.
-Linux / macOS: the `x86_64-unknown-linux-gnu.tar.gz` / `universal-apple-darwin.zip` asset of the same release, or
-`cargo install c2patool`. On the team laptop it is installed in `%LOCALAPPDATA%\Programs\c2patool\c2patool`.
+Settings, c2patool and public hosting: [docs/SETUP.md](docs/SETUP.md) · GPU server: [docs/SERVER_SETUP.md](docs/SERVER_SETUP.md)
 
 ## How it works
 ```
-upload ─► vault (SHA-256, read-only copy, append-only log)
-        ─► analyzers by type ── image: EXIF · ELA · noise map · copy-move · C2PA/XMP provenance · spectrum · visual artifacts
-                              ├ video: metadata · per-frame ELA/noise · temporal spikes · face track + flicker · keyframe checks
-                              ├ audio: splices · clicks · band limit · too-clean pauses · flat prosody · spectrogram · transcript
-                              └ text (.txt/.md/pasted): claims, like the caption
-        ─► text: claims from the caption (truthlens-vl; regex offline)
-        ─► cross-media: A/V flags within 0.5 s · caption↔image/frames · claimed date↔metadata · quote↔transcript · lip-sync
-        ─► fusion: noisy-OR of score × calibrated weight (calibration.json)
-        ─► dashboard (app.py) + self-contained HTML report
+upload ─► evidence vault     SHA-256, read-only copy, append-only custody log
+       ─► checks per media   image: EXIF · ELA · noise · copy-move · C2PA provenance · spectrum · visual artifacts
+                             video: metadata · frame jumps · face flicker · keyframes
+                             audio: splices · clicks · band limit · pauses · prosody · transcript
+       ─► trained detectors  CLIP ViT-L/14 (image, video) · WavLM (audio), on the team's GPU
+       ─► cross-media        caption vs image · date vs metadata · quote vs transcript · A/V alignment · lip-sync
+       ─► fusion             noisy-OR of score × calibrated weight
+       ─► dashboard + self-contained HTML report
 ```
-Every detector returns the frozen `Indicator` schema (`truthlens/indicator.py`). Model calls go only through
-`truthlens/llm.py` (JSON schemas checked locally, evidence text fenced as untrusted, disk cache so re-runs make zero calls).
 
-## Calibration
-`python calibrate.py` runs `testset/labels.csv` (see [testset/COLLECTING.md](testset/COLLECTING.md)), fits per-detector
-weights on 60% and reports held-out hit / false-alarm rates with Wilson 95% intervals into `calibration.json`, which
-fusion and the dashboard load. Synthetic `ph_*` placeholder rows (`python testset/make_placeholder.py`) are refused unless
-`--allow-placeholder`, and are then stamped SYNTHETIC everywhere.
-
-## Public mode
-For public hosting (e.g. on the GPU PC, against its own services). Off by default: without `TRUTHLENS_PUBLIC=1` the app is
-the local workspace, unchanged. Set these in `.env` (never in git):
-
-| Variable | What it does |
+| Laptop | Home GPU PC (over Tailscale) |
 |---|---|
-| `TRUTHLENS_PUBLIC=1` | Public mode on. |
-| `TRUTHLENS_ACCESS_CODE` | If set, visitors must enter it first (constant-time compare, 5 tries per IP per 10 minutes). |
-| `OLLAMA_URL`, `WHISPER_URL`, `DETECTORS_URL` | Model, transcription and trained-detector servers, e.g. `http://127.0.0.1:11434/v1` when the app runs on the GPU PC. |
+| Streamlit dashboard, evidence vault, CPU checks (OpenCV, NumPy, Pillow, ffmpeg), fusion, report | Ollama `truthlens-vl` · whisper.cpp · trained detectors (FastAPI) |
 
-In public mode each visitor sees only the three demo cases (read-only, from the cache) and the cases their own browser
-session created, stored under `cases_public/<session>/` and deleted 24 hours after creation (cleanup at startup and
-hourly). Uploads: at most 3 files of 50 MB per case, video and audio up to 120 s, 5 cases per session per hour, 30 per IP
-per day, refused when free disk space is below 10 GB. Analyses run one at a time with a queue position. Errors show only
-a reference id (the traceback is in the log), and host names, addresses and paths are removed from the page and the
-report. Start it with `python demo.py --no-browser` (it passes `--client.showErrorDetails none` in public mode).
+Language, vision and speech models run on the team's own GPU; evidence goes to a cloud AI only if explicitly enabled.
 
 ## Screens
-A forensic workbench: sidebar navigation, live service status, an overview of the case, then Analysis, Evidence viewer,
-Calibration and Chain of custody.
-
-| Overview | Evidence viewer | Analysis |
+| Evidence viewer | Analysis | Calibration |
 |---|---|---|
-| ![](docs/screenshots/v3/overview_1280x720.png) | ![](docs/screenshots/v3/evidence_1280x720.png) | ![](docs/screenshots/v3/analysis_1920x1080.png) |
+| ![](docs/screenshots/v3/evidence_1280x720.png) | ![](docs/screenshots/v3/analysis_1920x1080.png) | ![](docs/screenshots/v3/calibration_1280x720.png) |
 
-| Calibration | Chain of custody | Phone (390 px) |
-|---|---|---|
-| ![](docs/screenshots/v3/calibration_1280x720.png) | ![](docs/screenshots/v3/custody_1280x720.png) | ![](docs/screenshots/v3/overview_390x844.png) |
+| Chain of custody | Phone (390 px) |
+|---|---|
+| ![](docs/screenshots/v3/custody_1280x720.png) | ![](docs/screenshots/v3/overview_390x844.png) |
 
-The full set (390 px, 1280×720 and 1920×1080) is kept locally in `docs/screenshots/v3/` (git-ignored). Demo script: [DEMO.md](DEMO.md) · limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) ·
-team brief: [TASKS.md](TASKS.md) · rules: [AGENTS.md](AGENTS.md) · state + open items: [NOTES_STATE.md](NOTES_STATE.md)
+## Calibration
+Weights come from our labelled test set (`testset/labels.csv`, `python calibrate.py`), with Wilson 95% intervals and a
+held-out split; a check without a measured weight counts 0 and says so. Trained detectors count only once a media type
+has 10 untouched and 10 confirmed AI files of our own:
+
+| Detector | Our AI files | Caught | False alarms | Weight |
+|---|---|---|---|---|
+| Image | 16 | 3 / 16 | 1 / 29 | 0.64 |
+| Video | 13 | 2 / 13 | 0 / 23 | 0.72 |
+| Audio | 4 | 2 / 4 | 10 / 116 windows | uncalibrated (needs 6 more) |
+
+The test set still contains synthetic placeholder rows, so results are stamped SYNTHETIC. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+## Repository
+```
+app.py              dashboard (Streamlit)        truthlens/          vault, pipeline, analyzers, fusion, report, llm
+demo.py             seed demo cases + launch     calibrate.py        fit weights → calibration.json
+test_smoke.py       end-to-end smoke test        testset/            labels.csv, hash lists, collecting guide
+ui/, static/        theme and bundled fonts      docs/               setup, limitations, plan, notes, presentation
+```
+
+| Document | |
+|---|---|
+| [docs/presentation/](docs/presentation/) | pitch deck (PPTX, PDF) and project report |
+| [docs/DEMO.md](docs/DEMO.md) | 3-minute demo script |
+| [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | what TruthLens can and cannot tell you |
+| [docs/TASKS.md](docs/TASKS.md) · [docs/flowchart.html](docs/flowchart.html) | team brief, architecture and 24-hour plan |
+| [docs/NOTES_STATE.md](docs/NOTES_STATE.md) | build log and open items |
+| [AGENTS.md](AGENTS.md) | rules for contributors and coding agents |
