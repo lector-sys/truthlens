@@ -34,7 +34,9 @@ desktop.ini
 # the demo video carries a team member's cloned voice: kept local, not published
 docs/presentation/*.mp4
 
-# ---- dashboard screenshots: only the README / report picks are tracked ----
+# ---- dashboard screenshots: only the README (v4) and report (v2) picks are tracked ----
+docs/screenshots/*.png
+docs/screenshots/v3/
 docs/screenshots/v2/*
 !docs/screenshots/v2/results_demo2_1280x720.png
 !docs/screenshots/v2/flow_1280x720_analyzing.png
@@ -42,10 +44,5 @@ docs/screenshots/v2/*
 !docs/screenshots/v2/showme_demo1_1280x720.png
 !docs/screenshots/v2/tab_Evidence_demo2_1280x720.png
 !docs/screenshots/v2/report_demo1_1280x720.png
-docs/screenshots/v3/*
-!docs/screenshots/v3/overview_1280x720.png
-!docs/screenshots/v3/evidence_1280x720.png
-!docs/screenshots/v3/analysis_1920x1080.png
-!docs/screenshots/v3/calibration_1280x720.png
-!docs/screenshots/v3/custody_1280x720.png
-!docs/screenshots/v3/overview_390x844.png
+docs/screenshots/v4/before/
+docs/screenshots/v4/after/

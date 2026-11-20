@@ -12,7 +12,7 @@ cautious, calibrated label:
 Every finding points to where it is (region, frame, time span or text), explains why, and lists benign alternatives.
 Automated indicators, not proof: a person reviews every finding.
 
-![Forensic overview](docs/screenshots/v3/overview_1280x720.png)
+![Forensic overview](docs/screenshots/v4/overview_1280x720.png)
 
 ## Quick start
 ```
@@ -45,11 +45,11 @@ Language, vision and speech models run on the team's own GPU; evidence goes to a
 ## Screens
 | Evidence viewer | Analysis | Calibration |
 |---|---|---|
-| ![](docs/screenshots/v3/evidence_1280x720.png) | ![](docs/screenshots/v3/analysis_1920x1080.png) | ![](docs/screenshots/v3/calibration_1280x720.png) |
+| ![](docs/screenshots/v4/evidence_1280x720.png) | ![](docs/screenshots/v4/analysis_1920x1080.png) | ![](docs/screenshots/v4/calibration_1280x720.png) |
 
 | Chain of custody | Phone (390 px) |
 |---|---|
-| ![](docs/screenshots/v3/custody_1280x720.png) | ![](docs/screenshots/v3/overview_390x844.png) |
+| ![](docs/screenshots/v4/custody_1280x720.png) | ![](docs/screenshots/v4/overview_390x844.png) |
 
 ## Calibration
 Weights come from our labelled test set (`testset/labels.csv`, `python calibrate.py`), with Wilson 95% intervals and a
@@ -69,7 +69,7 @@ The test set still contains synthetic placeholder rows, so results are stamped S
 app.py              dashboard (Streamlit)        truthlens/          vault, pipeline, analyzers, fusion, report, llm
 demo.py             seed demo cases + launch     calibrate.py        fit weights → calibration.json
 test_smoke.py       end-to-end smoke test        testset/            labels.csv, hash lists, collecting guide
-ui/, static/        theme and bundled fonts      docs/               setup, limitations, plan, notes, presentation
+ui/, static/        design tokens, theme, components, fonts      docs/               setup, limitations, plan, notes, presentation
 ```
 
 | Document | |
@@ -79,4 +79,5 @@ ui/, static/        theme and bundled fonts      docs/               setup, limi
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | what TruthLens can and cannot tell you |
 | [docs/TASKS.md](docs/TASKS.md) · [docs/flowchart.html](docs/flowchart.html) | team brief, architecture and 24-hour plan |
 | [docs/NOTES_STATE.md](docs/NOTES_STATE.md) | build log and open items |
+| [docs/UI_GUIDE.md](docs/UI_GUIDE.md) · [docs/UI_AUDIT.md](docs/UI_AUDIT.md) | design system and the UI audit |
 | [AGENTS.md](AGENTS.md) | rules for contributors and coding agents |
