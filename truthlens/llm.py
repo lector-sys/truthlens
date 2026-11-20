@@ -3,7 +3,7 @@ then LLM_PROVIDERS; default ollama only): "ollama" (own GPU server, Chat Complet
 OpenAI-compatible), "openai" (Luna via the Responses API). Each reply is validated against its JSON schema locally; a bad
 or failed reply is retried once, then the next provider is tried, else None plus a "check_not_run" log entry.
 Audio goes to the whisper.cpp server at WHISPER_URL (or OpenAI transcription if that is unset), never to a chat model."""
-import base64, datetime, hashlib, http.client, io, json, os, subprocess, time, urllib.request, uuid, wave
+import base64, datetime, hashlib, http.client, io, json, os, subprocess, time, urllib.error, urllib.request, uuid, wave
 from pathlib import Path
 from urllib.parse import urlparse
 from PIL import Image
@@ -477,6 +477,24 @@ def ping():
     except OSError:
         return False, None
     return True, round((time.time() - t0) * 1000)
+
+
+def services():
+    """{service: up?} for each configured GPU-server service (dashboard status pill); any HTTP answer counts as up."""
+    out = {}
+    for name, url, path in (("Language model", OLLAMA_URL, "/api/tags"), ("Transcription", WHISPER_URL, "/"),
+                            ("Trained detectors", DETECTORS_URL, "/health")):
+        if not url:
+            continue
+        u = urlparse(url)
+        try:
+            urllib.request.urlopen(f"{u.scheme}://{u.netloc}{path}", timeout=3).read(1)
+            out[name] = True
+        except urllib.error.HTTPError:
+            out[name] = True
+        except (OSError, ValueError):
+            out[name] = False
+    return out
 
 
 BUSY_S = 5.0

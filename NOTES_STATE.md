@@ -294,3 +294,8 @@ B and C must `git pull origin main` before more work. No force-pushes.
 - Own untouched rows incl. hold-out: image 29, video 23, audio 116; own AI rows: 0 for every media, so all three stay uncalibrated (weight 0). Still needed: 10 AI files per media type.
 - v1 detector replies were moved out of cache/ (the cache key is file bytes + modality, not model version), so every score now is v2.
 - Analyze fresh (v2): demo1 Moderate 0.72 (image 0.56 < 0.66), demo2 Moderate 0.67 (video 0.05 < 0.66), demo3 Weak 0.35 (image 0.53 < 0.66); 1.m4a no significant 0.00 (audio 0.02 < 0.71; v1 0.90 fired); 5.m4a no significant 0.00 (0.02); WhatsApp Weak 0.15 (video 0.34 < 0.66; v1 0.69 fired).
+
+## Dashboard v3 + public mode (2026-11-20)
+- Layout: sidebar nav (Overview · Analysis · Evidence viewer · Calibration · Chain of custody), current-case card, top bar with a service status pill (llm.services(): language model, transcription, trained detectors), KPI overview. Display only: result.json, labels and weights of all 32 cases byte-identical before/after.
+- Integrity shows "Verified" only after an explicit Verify (logged re-hash); the custody stamp uses the same rule.
+- Public mode (TRUTHLENS_PUBLIC=1, truthlens/public.py): access code, cases_public/<session tag>/, limits, 24 h cleanup, FIFO queue, scrubbed hosts/addresses/paths, reference-only errors. Rate counters are in memory (reset on restart; one process). Behind a reverse proxy, st.context.ip_address is the proxy's address.

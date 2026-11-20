@@ -2,15 +2,14 @@
 One flow: Upload -> Analyzing -> Results (overview, then Evidence / Cross-media / All findings / Custody / Calibration).
 Theme "Evidence Light Table": ui/theme.css + .streamlit/config.toml, fonts bundled in static/fonts. Display only:
 nothing here changes an analysis result, weight or label."""
-import base64, hashlib, html, io, json, logging, os, re, threading, time, traceback, urllib.error, urllib.request
-from urllib.parse import urlparse
+import base64, hashlib, html, io, json, logging, os, re, threading, time, traceback
 from pathlib import Path
 import numpy as np
 import streamlit as st
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from rapidfuzz import fuzz
-from truthlens.vault import Case, CASES, sha256
-from truthlens import pipeline, report, fusion, llm, learned
+from truthlens.vault import Case, CASES, case_dir, sha256
+from truthlens import pipeline, report, fusion, llm, learned, public
 from calibrate import MIN_OWN
 from truthlens.analyzers import IMAGE_EXTS, TEXT_EXTS
 from truthlens.analyzers.media_meta import readable_image
@@ -31,7 +30,7 @@ ICON = {"image": "🖼️", "video": "🎞️", "audio": "🎙️", "text": "�
 LAYER = {"ELA": ("_ela.png", (79, 209, 197)), "Noise map": ("_noise.png", (242, 181, 68)),
          "Trained detector": ("_learned.png", (187, 154, 247))}
 PAGES = ["Overview", "Analysis", "Evidence viewer", "Calibration", "Chain of custody"]
-PUBLIC = os.getenv("TRUTHLENS_PUBLIC") == "1"
+PUBLIC = public.PUBLIC
 MEDIA_ROWS = {"image": "Image", "video": "Video", "audio": "Audio", "cross": "Cross-modal"}
 HIDDEN = ("smoke_", "calib_", "probe_", "diag_", "pv_", "tmp_")
 TERMS = {  # indicator type -> (plain name, what it means); used for tooltips and the sidebar glossary
@@ -93,9 +92,44 @@ qp, ss = st.query_params, st.session_state
 cal = fusion.load_calibration()
 
 
+@st.cache_resource
+def _cleanup_started():
+    public.start_cleanup()
+    return True
+
+
+if PUBLIC:
+    _cleanup_started()
+    sid = ss.setdefault("sid", public.new_session_id())
+    ip = st.context.ip_address or "unknown"  # ponytail: behind a reverse proxy this is the proxy; read its header then
+    if public.ACCESS_CODE and not ss.get("authed"):
+        st.title("TruthLens demo")
+        with st.form("gate"):
+            code = st.text_input("Access code", type="password")
+            if st.form_submit_button("Enter", type="primary"):
+                ok, msg = public.check_code(code, ip)
+                if ok:
+                    ss["authed"] = True
+                    st.rerun()
+                st.error(msg)
+        st.stop()
+
+
 # ---------- small helpers ----------
 def md(s):
-    st.markdown(s, unsafe_allow_html=True)
+    st.markdown(public.scrub(s) if PUBLIC else s, unsafe_allow_html=True)
+
+
+def oops(what, tb):
+    """Public mode: a reference id on screen, the traceback only in the log. Else the friendly note + folded details."""
+    if PUBLIC:
+        ref = hashlib.sha256(f"{time.time()}{tb}".encode()).hexdigest()[:8]
+        logging.getLogger("truthlens.app").error("ref %s: %s failed\n%s", ref, what, tb)
+        st.error(f"Something went wrong (reference {ref}).", icon="⚠️")
+        return
+    st.info(f"This {what} couldn't be shown. The analysis itself is unaffected.", icon="ℹ️")
+    with st.expander("Details"):
+        st.code(tb[-3000:])
 
 
 def level(headline):
@@ -159,9 +193,7 @@ def safe(fn, what):
         fn()
     except Exception:
         logging.getLogger("truthlens.app").exception("panel failed: %s", what)  # full traceback in the dashboard log
-        st.info(f"This {what} couldn't be shown. The analysis itself is unaffected.", icon="ℹ️")
-        with st.expander("Details"):
-            st.code(traceback.format_exc()[-3000:])
+        oops(what, traceback.format_exc())
 
 
 def steps(k):
@@ -239,7 +271,7 @@ def film_strip(frames, hits, focus_t=None, n=8):
 def custody_stamp(case, log, res):
     ingests = [x for x in log if x["action"] == "ingest"]
     t0 = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ingests[0]["ts"])) if ingests else "–"
-    ok, bad = verified(res, log), not all(res["integrity"].values())
+    ok, bad = verified(case, res, log), not all(res["integrity"].values())
     hashes = "".join(f'<div class="v h" title="{e(x["sha256"])}">{e(x["file"][:40])} · sha256 {x["sha256"][:12]}…{x["sha256"][-4:]}</div>'
                      for x in ingests)
     md(f'<div class="stamp" role="group" aria-label="Custody stamp"><div class="k">case</div><div class="v">{e(case.id)}</div>'
@@ -300,6 +332,8 @@ def label_hero(res, inds, a):
 
 # ---------- case list ----------
 def case_dirs():
+    if PUBLIC:  # the demo cases and this browser session's own cases only
+        return [case_dir(c) for c in public.session_cases(ss["sid"]) + list(public.DEMOS) if (case_dir(c) / "result.json").exists()]
     if not CASES.exists():
         return []
     ds = [d for d in CASES.iterdir() if (d / "result.json").exists() and not d.name.startswith(HIDDEN)]
@@ -307,7 +341,7 @@ def case_dirs():
 
 
 def mtime(case_id):
-    return (CASES / case_id / "result.json").stat().st_mtime
+    return (case_dir(case_id) / "result.json").stat().st_mtime
 
 
 @st.cache_data(show_spinner=False)
@@ -344,26 +378,13 @@ def case_meta(case_id, mtime):
 @st.cache_data(show_spinner=False)
 def report_html(case_id, mtime, log_size):
     c = Case(case_id)
-    return report.render(c, load(case_id, mtime))
+    out = report.render(c, load(case_id, mtime))
+    return public.scrub(out) if PUBLIC else out
 
 
 @st.cache_data(ttl=30, show_spinner=False)
 def services():
-    """{service: up?} for each configured GPU-server service; any HTTP answer counts as up."""
-    out = {}
-    for name, url, path in (("Language model", llm.OLLAMA_URL, "/api/tags"), ("Transcription", llm.WHISPER_URL, "/"),
-                            ("Trained detectors", llm.DETECTORS_URL, "/health")):
-        if not url:
-            continue
-        u = urlparse(url)
-        try:
-            urllib.request.urlopen(f"{u.scheme}://{u.netloc}{path}", timeout=3).read(1)
-            out[name] = True
-        except urllib.error.HTTPError:
-            out[name] = True
-        except (OSError, ValueError):
-            out[name] = False
-    return out
+    return llm.services()
 
 
 @st.fragment(run_every=30)
@@ -406,7 +427,9 @@ def open_case(cid):
 
 known = [d.name for d in case_dirs()]
 pick = qp.get("case") or (known[0] if known else "new")
-if pick != "new" and not (CASES / pick / "result.json").exists() and not (ss.get("job", {}).get("case") == pick):
+if PUBLIC and pick != "new" and not public.visible(pick, ss["sid"]):
+    pick = "new"
+if pick != "new" and not (case_dir(pick) / "result.json").exists() and not (ss.get("job", {}).get("case") == pick):
     pick = "new"
 
 def nav_page():
@@ -475,7 +498,11 @@ def upload_page():
     steps(0)
     md('<h1 class="ph">New analysis</h1>')
     md('<div class="muted" style="margin:-6px 0 12px">Evidence is hashed (SHA-256) on arrival, stored read-only, and every step is logged.</div>')
+    if PUBLIC:
+        md(f'<div class="panel small warn" role="note">{e(public.NOTICE)}</div>')
     files = st.file_uploader("Drop evidence files here (several at once is fine)", accept_multiple_files=True)
+    if PUBLIC:
+        md(f'<div class="small" style="margin:-8px 0 6px">{e(public.LIMITS)}</div>')
     md('<div class="muted tiny" style="margin-top:-8px">Images: JPG, PNG, WebP, TIFF, BMP, GIF, AVIF, HEIC, JXL · Video: MP4, MOV, MKV, '
        'WebM, AVI · Audio: WAV, MP3, M4A, FLAC, OGG · Text: TXT, MD</div>')
     context = st.text_area("Caption / claims (optional)", height=90,
@@ -494,12 +521,18 @@ def upload_page():
         md('<div class="panel">' + "".join(rows) + "</div>")
     empty = not files and not pasted.strip()
     c1, c2 = st.columns([1, 3], vertical_alignment="center")
-    fresh = c2.checkbox("Ask the models again (don't reuse cached answers)")
+    fresh = not PUBLIC and c2.checkbox("Ask the models again (don't reuse cached answers)")
     if c1.button("Analyze", type="primary", disabled=empty, width="stretch"):
-        case = Case()
         uploads = {f.name: f.getvalue() for f in files or []}
         if pasted.strip():
             uploads["pasted_text.txt"] = pasted.strip().encode("utf-8")
+        if PUBLIC:
+            if problems := public.upload_problems(list(uploads.items()), ss["sid"], ip):
+                for x in problems:
+                    st.error(x)
+                st.stop()
+            public.count_case(ss["sid"], ip)
+        case = Case(public.new_case_id(ss["sid"]) if PUBLIC else None)
         for n, b in uploads.items():
             if sha256(case.ingest(n, b)) != hashlib.sha256(b).hexdigest():
                 st.error(f"The stored copy of {n} does not match the upload. Please upload it again.")
@@ -515,6 +548,8 @@ def upload_page():
 
 def work(job):
     """The analysis, off the page thread, so the page can show live progress and elapsed time."""
+    if PUBLIC:
+        public.wait_turn(job["case"])
     llm.FRESH = job["fresh"]
     try:
         pipeline.run(Case(job["case"]), job["context"], lambda step, state: job["ev"].append((time.time(), step, state)))
@@ -523,6 +558,8 @@ def work(job):
     finally:
         llm.FRESH = False
         job["done"] = time.time()
+        if PUBLIC:
+            public.done(job["case"])
 
 
 # ---------- 2. analyzing ----------
@@ -585,6 +622,9 @@ def live_progress():
     if not job:
         return
     case = Case(job["case"])
+    if PUBLIC and (q := public.position(job["case"])):
+        md(f'<div class="panel small" role="status">Queued: {q} {"analysis" if q == 1 else "analyses"} ahead of yours. '
+           "Analyses run one at a time.</div>")
     md(progress_html(job, case))
     if not job.get("done"):
         return
@@ -592,8 +632,7 @@ def live_progress():
         ss.pop("job", None)
         st.rerun(scope="app")
     st.warning("The analysis stopped unexpectedly. The case and its evidence are kept, and it is marked failed.", icon="⚠️")
-    with st.expander("Details"):
-        st.code(job["error"][-3000:])
+    oops("analysis", job["error"])
     if st.button("Open the case", type="primary"):
         ss.pop("job", None)
         st.rerun(scope="app")
@@ -611,9 +650,22 @@ def check_media(c):
             "face_region_flicker": "video"}.get(c, "cross")
 
 
-def verified(res, log):
+def read_only(case):
+    return PUBLIC and case.id in public.DEMOS
+
+
+def verify_now(case):
+    """Re-hash the evidence; logged to the custody log (public demo cases: kept in this session, the case stays untouched)."""
+    v = case.verify()
+    if read_only(case):
+        ss[f"verify_{case.id}"] = {"ts": time.time(), "action": "verify", **{k: ("ok" if ok else "MISMATCH") for k, ok in v.items()}}
+    else:
+        case.log("verify", **{k: ("ok" if ok else "MISMATCH") for k, ok in v.items()})
+
+
+def verified(case, res, log):
     """True only after an explicit re-hash (Verify) whose newest result is all ok, and the files still match now."""
-    v = [x for x in log if x["action"] == "verify"]
+    v = [x for x in log if x["action"] == "verify"] + [x for x in [ss.get(f"verify_{case.id}")] if x]
     return (bool(v) and all(val == "ok" for k, val in v[-1].items() if k not in ("ts", "action"))
             and all(res["integrity"].values()))
 
@@ -643,7 +695,7 @@ def footer():
 def export_button(case, key):
     log_size = case.log_path.stat().st_size if case.log_path.exists() else 0
     if st.download_button("Export report", report_html(case.id, mtime(case.id), log_size), f"{case.id}.html", "text/html",
-                          width="stretch", key=key, help="Self-contained HTML; print it to PDF from the browser"):
+                          width="stretch", key=key, help="Self-contained HTML; print it to PDF from the browser") and not read_only(case):
         case.log("report_export", format="html")
 
 
@@ -662,7 +714,7 @@ def overview(case, res, inds, a, tags, log):
     if until := public_expiry(case):
         md(f'<div class="panel small warn">This case will be deleted on {e(until)}.</div>')
     for w in llm.server_warnings(log):
-        st.warning(w, icon="⏳" if w.startswith("GPU server busy") else "📡")
+        st.warning(public.scrub(w) if PUBLIC else w, icon="⏳" if w.startswith("GPU server busy") else "📡")
     cov = res["coverage"]
     failed = res["headline"].startswith(("Not analysed", "Failed"))
     n_ok = sum(1 for f in cov.get("files", {}).values() if f["analysed"])
@@ -682,14 +734,13 @@ def overview(case, res, inds, a, tags, log):
         with k4:
             if bad:
                 md(kpi("Integrity status", '<span style="color:#F97352">✗ Mismatch</span>', e(", ".join(bad))))
-            elif verified(res, log):
+            elif verified(case, res, log):
                 md(kpi("Integrity status", '<span style="color:#4FD1C5">✓ Verified</span>', "",
                        '<span class="chip" style="--c:#4FD1C5">SHA‑256 match</span>'))
             else:
                 md(kpi("Integrity status", "Not verified", "re-hash the evidence against its intake SHA‑256"))
                 if st.button("Verify", key="kpi_verify", width="stretch"):
-                    v = case.verify()
-                    case.log("verify", **{k: ("ok" if good else "MISMATCH") for k, good in v.items()})
+                    verify_now(case)
                     st.rerun()
     creds = report.content_credentials(case, inds)
     ss["_creds"] = bool(creds)
@@ -1107,8 +1158,7 @@ def custody_tab(case, res, log):
     with c2:
         md("<h4>Integrity</h4>")
         if st.button("Verify integrity now", type="primary"):
-            v = case.verify()
-            case.log("verify", **{k: ("ok" if ok else "MISMATCH") for k, ok in v.items()})
+            verify_now(case)
             st.rerun()
         with st.expander("Full SHA-256 hashes (copy)"):
             for x in log:
@@ -1216,7 +1266,8 @@ def results_page(case, page):
 
 
 def public_expiry(case):
-    return None
+    t = public.expires(case.id) if PUBLIC else None
+    return time.strftime("%d %b %Y, %H:%M", time.localtime(t)) if t else None
 
 
 page = "Calibration" if nav_page() == "Calibration" else "New analysis" if pick == "new" else nav_page()
@@ -1224,12 +1275,23 @@ topbar(page)
 if ss.pop("_scroll", False):
     st.iframe("<script>window.parent.document.querySelector('[data-testid=stMain]').scrollTo(0, 0)</script>", height=1)
 job = ss.get("job")
-if page == "Calibration":
-    safe(calibration_tab, "calibration view")
-    footer()
-elif pick == "new":
-    upload_page()
-elif job and job["case"] == pick:
-    analyzing_page(job)
-else:
-    results_page(Case(pick), page)
+
+
+def route():
+    if page == "Calibration":
+        safe(calibration_tab, "calibration view")
+        footer()
+    elif pick == "new":
+        upload_page()
+    elif job and job["case"] == pick:
+        analyzing_page(job)
+    else:
+        results_page(Case(pick), page)
+
+
+try:
+    route()
+except Exception:
+    if not PUBLIC:
+        raise
+    oops("page", traceback.format_exc())

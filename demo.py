@@ -75,5 +75,7 @@ if __name__ == "__main__":
     if "--no-browser" not in args:
         threading.Thread(target=lambda: (time.sleep(3), webbrowser.open(URL)), daemon=True).start()
     print(f"Dashboard: {URL}")
+    public = os.getenv("TRUTHLENS_PUBLIC") == "1"  # public: 50 MB uploads (config.toml) and no error details on screen
     subprocess.run([sys.executable, "-m", "streamlit", "run", str(ROOT / "app.py"), "--server.headless", "true",
-                    "--server.port", "8501"], env=os.environ)
+                    "--server.port", "8501", *(["--client.showErrorDetails", "none"] if public else ["--server.maxUploadSize", "200"])],
+                   env=os.environ)

@@ -1,8 +1,14 @@
 """Evidence vault: hash on ingest, read-only working copy, append-only case log."""
-import hashlib, json, os, shutil, stat, time
+import hashlib, json, os, re, shutil, stat, time
 from pathlib import Path
 
 CASES = Path(__file__).resolve().parent.parent / "cases"
+PUBLIC_CASES = CASES.parent / "cases_public"  # public demo mode: cases_public/<session tag>/pub-<session tag>-<time>
+
+
+def case_dir(case_id):
+    m = re.fullmatch(r"pub-([0-9a-f]{16})-[0-9_a-f]+", case_id)
+    return PUBLIC_CASES / m[1] / case_id if m else CASES / case_id
 
 
 def sha256(path):
@@ -16,7 +22,7 @@ def sha256(path):
 class Case:
     def __init__(self, case_id=None):
         self.id = case_id or time.strftime("case_%Y%m%d_%H%M%S")
-        self.dir = CASES / self.id
+        self.dir = case_dir(self.id)
         (self.dir / "evidence").mkdir(parents=True, exist_ok=True)
         (self.dir / "artifacts").mkdir(exist_ok=True)
         self.log_path = self.dir / "log.jsonl"

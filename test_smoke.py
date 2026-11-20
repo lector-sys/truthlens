@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 from truthlens.vault import Case
 from truthlens.indicator import Indicator
-from truthlens import pipeline, report, fusion, crossmodal, llm, learned
+from truthlens import pipeline, report, fusion, crossmodal, llm, learned, public, vault
 from pathlib import Path
 from truthlens.analyzers import audio, image, video
 from testset import make_placeholder as ph
@@ -14,6 +14,81 @@ import calibrate
 
 llm.PROVIDERS, llm.WHISPER_URL, llm.DETECTORS_URL = [], "", ""  # never the network, whatever .env says
 pipeline.ISOLATE = False  # analyzers in-process, so tests can swap in fakes; the child-process path is tested on its own
+
+
+APP_CHECK = """
+import sys
+from streamlit.testing.v1 import AppTest
+at = AppTest.from_file("app.py", default_timeout=120).run()
+text = " ".join(str(m.value) for m in at.markdown) + " ".join(t.value for t in at.title)
+labels = [t.label for t in at.text_input]
+print(repr({"gate": "Access code" in labels, "demo_env": "Demo environment" in text, "local": "Local workspace" in text,
+            "own_case": "case_2026" in text, "exc": [str(x.value)[:200] for x in at.exception]}))
+"""
+
+
+def app_run(**env):
+    """Run app.py once under streamlit's AppTest in a fresh interpreter with these environment variables."""
+    e = {k: v for k, v in os.environ.items() if not k.startswith("TRUTHLENS_")} | env
+    out = subprocess.run([sys.executable, "-c", APP_CHECK], capture_output=True, text=True, env=e, timeout=300)
+    return eval(out.stdout.strip().splitlines()[-1])
+
+
+def public_mode_checks():
+    """Public mode: access code, per-session isolation, upload limits, auto-delete; off = the local workspace as before."""
+    off = app_run()
+    assert not off["gate"] and not off["demo_env"] and off["local"] and not off["exc"], off
+    on = app_run(TRUTHLENS_PUBLIC="1", TRUTHLENS_ACCESS_CODE="smoke-code")
+    assert on["gate"] and not on["own_case"] and not on["local"] and not on["exc"], on  # nothing but the code prompt
+    # access code: constant-time compare, 5 tries per IP per 10 minutes
+    public.ACCESS_CODE = "smoke-code"
+    assert public.check_code("smoke-code", "ip1")[0] and not public.check_code("nope", "ip2")[0]
+    for _ in range(4):
+        public.check_code("nope", "ip2")
+    assert not public.check_code("smoke-code", "ip2")[0], "6th try within 10 minutes must be refused"
+    # isolation, in a scratch public root
+    tmp = Path(__file__).resolve().parent / "cases" / "smoke_public"
+    old = vault.PUBLIC_CASES, public.ROOT
+    vault.PUBLIC_CASES = public.ROOT = tmp
+    try:
+        a, b = public.new_session_id(), public.new_session_id()
+        ca = Case(public.new_case_id(a))
+        (ca.dir / "result.json").write_text("{}")
+        assert ca.dir.parent.parent == tmp and public.session_cases(a) == [ca.id] and public.session_cases(b) == []
+        assert public.visible(ca.id, a) and not public.visible(ca.id, b)
+        assert public.visible("demo2", b) and not public.visible("case_20261120_051030", a) and not public.visible("../cases/x", a)
+        # limits: file count, size, duration (ffprobe), per-session and per-IP rate, free disk
+        def wav(seconds):
+            f = io.BytesIO()
+            with wave.open(f, "wb") as w:
+                w.setnchannels(1), w.setsampwidth(1), w.setframerate(8000), w.writeframes(b"\x80" * 8000 * seconds)
+            return f.getvalue()
+        assert public.upload_problems([("a.wav", wav(5))], a, "ipA") == []
+        assert any("At most 3 files" in x for x in public.upload_problems([(f"{k}.txt", b"x") for k in range(4)], a, "ipA"))
+        assert any("limit is 50 MB" in x for x in public.upload_problems([("big.jpg", b"0" * (51 << 20))], a, "ipA"))
+        assert any("at most 120 s" in x for x in public.upload_problems([("long.wav", wav(121))], a, "ipA"))
+        for _ in range(5):
+            public.count_case(a, "ipA")
+        assert any("per hour" in x for x in public.upload_problems([("a.txt", b"x")], a, "ipA"))
+        for _ in range(30):
+            public.count_case(public.new_session_id(), "ipB")
+        assert any("per day" in x for x in public.upload_problems([("a.txt", b"x")], b, "ipB"))
+        du = public.shutil.disk_usage
+        public.shutil.disk_usage = lambda _p: NS(free=1 << 30)
+        try:
+            assert any("storage is full" in x for x in public.upload_problems([("a.txt", b"x")], b, "ipC"))
+        finally:
+            public.shutil.disk_usage = du
+        # auto-delete after 24 h, not before
+        ca.ingest("e.txt", b"evidence")
+        assert public.cleanup() == [] and ca.dir.exists() and public.expires(ca.id)
+        assert public.cleanup(now=time.time() + 25 * 3600) == [ca.id] and not ca.dir.exists()
+        # nothing on screen names a host, an address or a path
+        assert public.scrub("detector server unavailable (http://gpu.tail1.ts.net:8090/x) at 100.1.2.3 in C:\\Users\\x\\y.jpg") == \
+            "detector server unavailable ([server]) at [address] in [path]"
+    finally:
+        vault.PUBLIC_CASES, public.ROOT = old
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def jpeg(arr, q=75):
@@ -645,6 +720,7 @@ try:
     assert few["weight"] is None and few["need"] == {"untouched": 1, "ai": 0} and few["n_untouched"] == 9, few
     enough = calibrate.learned_fit(rows(10, 10, fire_real=2), "image")
     assert enough["weight"] > 0 and enough["false_alarms"] == 2, enough
+    public_mode_checks()
     print("OK", sorted(types), res["assessment"]["case"])
 finally:
     case.delete()

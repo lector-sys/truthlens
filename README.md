@@ -63,6 +63,23 @@ weights on 60% and reports held-out hit / false-alarm rates with Wilson 95% inte
 fusion and the dashboard load. Synthetic `ph_*` placeholder rows (`python testset/make_placeholder.py`) are refused unless
 `--allow-placeholder`, and are then stamped SYNTHETIC everywhere.
 
+## Public mode
+For public hosting (e.g. on the GPU PC, against its own services). Off by default: without `TRUTHLENS_PUBLIC=1` the app is
+the local workspace, unchanged. Set these in `.env` (never in git):
+
+| Variable | What it does |
+|---|---|
+| `TRUTHLENS_PUBLIC=1` | Public mode on. |
+| `TRUTHLENS_ACCESS_CODE` | If set, visitors must enter it first (constant-time compare, 5 tries per IP per 10 minutes). |
+| `OLLAMA_URL`, `WHISPER_URL`, `DETECTORS_URL` | Model, transcription and trained-detector servers, e.g. `http://127.0.0.1:11434/v1` when the app runs on the GPU PC. |
+
+In public mode each visitor sees only the three demo cases (read-only, from the cache) and the cases their own browser
+session created, stored under `cases_public/<session>/` and deleted 24 hours after creation (cleanup at startup and
+hourly). Uploads: at most 3 files of 50 MB per case, video and audio up to 120 s, 5 cases per session per hour, 30 per IP
+per day, refused when free disk space is below 10 GB. Analyses run one at a time with a queue position. Errors show only
+a reference id (the traceback is in the log), and host names, addresses and paths are removed from the page and the
+report. Start it with `python demo.py --no-browser` (it passes `--client.showErrorDetails none` in public mode).
+
 ## Screens
 A forensic workbench: sidebar navigation, live service status, an overview of the case, then Analysis, Evidence viewer,
 Calibration and Chain of custody.
