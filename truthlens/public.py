@@ -11,7 +11,8 @@ PUBLIC = os.getenv("TRUTHLENS_PUBLIC") == "1"
 ACCESS_CODE = os.getenv("TRUTHLENS_ACCESS_CODE", "")
 DEMOS = ("demo1", "demo2", "demo3")
 MAX_MB, MAX_FILES, MAX_SECONDS = 50, 3, 120
-PER_SESSION_HOUR, PER_IP_DAY = 5, 30
+PER_SESSION_HOUR = int(os.getenv("TRUTHLENS_PER_SESSION_HOUR", "5"))
+PER_IP_DAY = int(os.getenv("TRUTHLENS_PER_IP_DAY", "30"))
 MIN_FREE_GB, KEEP_H = 10, 24
 CODE_TRIES, CODE_WINDOW_S = 5, 600
 LIMITS = (f"Up to {MAX_FILES} files per case, {MAX_MB} MB each · video and audio up to {MAX_SECONDS} s · "

@@ -101,7 +101,7 @@ def _cleanup_started():
 if PUBLIC:
     _cleanup_started()
     sid = ss.setdefault("sid", public.new_session_id())
-    ip = st.context.ip_address or "unknown"  # ponytail: behind a reverse proxy this is the proxy; read its header then
+    ip = st.context.ip_address or "unknown"  # real visitor behind Tailscale Funnel (it sets X-Real-Ip/X-Forwarded-For; forged ones are overwritten, tested)
     if public.ACCESS_CODE and not ss.get("authed"):
         st.title("TruthLens demo")
         with st.form("gate"):
